@@ -16,10 +16,11 @@ def import_completed(db, settings: Settings) -> list[str]:
     client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
     history = client.history()
     history_by_id = {str(item.get("nzo_id")): item for item in history if item.get("nzo_id")}
+    history_by_name = _history_by_name(history)
 
     imported = []
     for download in db.snatched_downloads():
-        item = history_by_id.get(str(download["package_id"]))
+        item = _history_item_for_download(download, history_by_id, history_by_name)
         if not item:
             continue
         if _history_status(item) == "failed":
@@ -44,6 +45,26 @@ def import_completed(db, settings: Settings) -> list[str]:
         else:
             db.update_download_storage(download["id"], storage, "import_error")
     return imported
+
+
+def _history_item_for_download(download, history_by_id: dict, history_by_name: dict):
+    item = history_by_id.get(str(download["package_id"]))
+    if item:
+        return item
+    return history_by_name.get(_history_name_key(download["release_title"]))
+
+
+def _history_by_name(history: list[dict]) -> dict[str, dict]:
+    items = {}
+    for item in history:
+        key = _history_name_key(item.get("name"))
+        if key and key not in items:
+            items[key] = item
+    return items
+
+
+def _history_name_key(value) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
 
 
 def _history_status(item: dict) -> str:
