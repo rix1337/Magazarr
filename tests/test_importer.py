@@ -217,6 +217,33 @@ def test_library_destination_is_nested_and_filesystem_safe(tmp_path):
     )
 
 
+def test_library_destination_uses_release_date_for_numbered_issue_key(tmp_path):
+    settings = Settings(library_dir=str(tmp_path / "library"))
+    download = {
+        "magazine_id": 3,
+        "magazine_title": "PC Gamer",
+        "issue_key": "2026-issue-0421",
+        "release_title": "PC Gamer UK - Issue 421, 2026 05",
+    }
+
+    dest = _library_destination(
+        settings,
+        download,
+        tmp_path / "PC.Gamer.UK..Issue.421.May.2026.PDF",
+    )
+
+    assert dest == (
+        tmp_path
+        / "library"
+        / "magazines"
+        / "3"
+        / "2026"
+        / "05"
+        / "PC Gamer"
+        / "2026-issue-0421 - PC.Gamer.UK..Issue.421.May.2026.pdf"
+    )
+
+
 def test_blank_quasarr_storage_does_not_import_from_cwd(tmp_path):
     db = Database(tmp_path / "magazarr.db")
     db.migrate()

@@ -9,7 +9,7 @@ from loguru import logger
 from magazarr.notifications import notify_error, notify_import_success
 from magazarr.quasarr_client import QuasarrClient
 from magazarr.settings import Settings
-from magazarr.utils import safe_filename
+from magazarr.utils import MONTHS, parse_issue_date, safe_filename, tokens
 
 
 def import_completed(db, settings: Settings) -> list[str]:
@@ -125,7 +125,10 @@ def _is_filesystem_root(path: Path) -> bool:
 
 
 def _library_destination(settings: Settings, download, pdf: Path) -> Path:
-    year, month = _issue_path_parts(download["issue_key"])
+    year, month = _issue_path_parts(
+        download["issue_key"],
+        _download_value(download, "release_title"),
+    )
     title = safe_filename(download["magazine_title"])
     filename = safe_filename(
         f"{download['issue_key']} - {pdf.stem}"
@@ -141,12 +144,53 @@ def _library_destination(settings: Settings, download, pdf: Path) -> Path:
     )
 
 
-def _issue_path_parts(issue_key: str) -> tuple[str, str]:
+def _download_value(download, key: str) -> str:
+    try:
+        return str(download[key] or "")
+    except (KeyError, IndexError):
+        return ""
+
+
+def _issue_path_parts(issue_key: str, release_title: str = "") -> tuple[str, str]:
     parts = str(issue_key or "").split("-")
     if len(parts) >= 2 and len(parts[0]) == 4 and len(parts[1]) == 2:
         if parts[0].isdigit() and parts[1].isdigit():
             return parts[0], parts[1]
+    issue = parse_issue_date(release_title)
+    if issue and issue.value:
+        return str(issue.value.year), f"{issue.value.month:02d}"
+    release_parts = _issue_path_parts_from_text(release_title)
+    if release_parts:
+        return release_parts
     return "unknown-year", "unknown-month"
+
+
+def _issue_path_parts_from_text(value: str) -> tuple[str, str] | None:
+    words = tokens(value)
+    for idx, word in enumerate(words):
+        if word.isdigit() and len(word) == 4 and word.startswith("20"):
+            for pos in (idx + 1, idx - 1):
+                if 0 <= pos < len(words):
+                    month = _path_month(words[pos])
+                    if month:
+                        return word, f"{month:02d}"
+        month = MONTHS.get(word)
+        if month:
+            for pos in (idx + 1, idx - 1):
+                if 0 <= pos < len(words):
+                    year = words[pos]
+                    if year.isdigit() and len(year) == 4 and year.startswith("20"):
+                        return year, f"{month:02d}"
+    return None
+
+
+def _path_month(value: str) -> int | None:
+    if not value.isdigit():
+        return None
+    month = int(value)
+    if 1 <= month <= 12:
+        return month
+    return None
 
 
 def _import_error(db, settings: Settings, message: str, download=None):

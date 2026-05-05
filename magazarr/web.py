@@ -15,6 +15,7 @@ from magazarr.opds import handle_opds
 from magazarr.quasarr_client import QuasarrClient
 from magazarr.search import search_magazine
 from magazarr.settings import SettingsStore
+from magazarr.utils import pdf_mime
 from magazarr.version import __version__
 
 
@@ -166,6 +167,23 @@ def create_app(settings_store: SettingsStore, db, automation=None):
         _delete_download_package(db, settings, download_id)
         redirect("/")
 
+    @app.get("/issues/<issue_id:int>/view")
+    def view_issue(issue_id):
+        issue = _issue_or_404(db, issue_id)
+        _issue_path_or_404(issue)
+        return issue_viewer_page(issue)
+
+    @app.get("/issues/<issue_id:int>/file")
+    def issue_file(issue_id):
+        issue = _issue_or_404(db, issue_id)
+        path = _issue_path_or_404(issue)
+        result = static_file(path.name, root=str(path.parent), mimetype=pdf_mime(str(path)))
+        result.set_header(
+            "Content-Disposition",
+            f'inline; filename="{_header_filename(path.name)}"',
+        )
+        return result
+
     @app.post("/issues/<issue_id:int>/delete")
     def delete_issue(issue_id):
         issue = db.delete_issue(issue_id)
@@ -250,8 +268,10 @@ def dashboard(settings, db) -> str:
     <section class="topbar">
       <div class="topbar-inner">
         <div class="brand">
-          <img class="brand-logo" src="/static/magazarr-logo.png" alt="Magazarr">
-          <h1 class="sr-only">Magazarr</h1>
+          <a class="brand-link" href="https://github.com/rix1337/Magazarr" target="_blank" rel="noreferrer">
+            <img class="brand-logo" src="/static/magazarr-logo.png" alt="Magazarr">
+            <h1 class="sr-only">Magazarr</h1>
+          </a>
           <span>v{__version__}</span>
         </div>
         <nav class="top-actions">
@@ -516,6 +536,8 @@ def issue_payload(row):
         "issue_key": row["issue_key"],
         "release_title": row["release_title"],
         "file_path": row["file_path"],
+        "view_url": f"/issues/{row['id']}/view",
+        "file_url": f"/issues/{row['id']}/file",
         "acquired_at": row["acquired_at"],
         "size_bytes": row["size_bytes"],
     }
@@ -804,6 +826,8 @@ def page_script() -> str:
         <div class="muted">${esc(item.release_title)}</div>
         <div class="file-path">${esc(item.file_path)}</div>
         <div class="download-actions">
+          <a class="button-link" href="${esc(item.view_url)}" target="_blank" rel="noreferrer">View</a>
+          <a class="button-link secondary" href="${esc(item.file_url)}" target="_blank" rel="noreferrer">PDF</a>
           <form method="post" action="/issues/${item.id}/delete"><button>Delete</button></form>
         </div>`;
       return card;
@@ -918,6 +942,45 @@ def _unskip_release(db, settings, skip_id: int):
         f"{skipped['magazine_title']} - {skipped['release_title']} ({issue_key})",
     )
     return package_id
+
+
+def _issue_or_404(db, issue_id: int):
+    issue = db.issue_by_id(issue_id)
+    if not issue:
+        raise HTTPError(404, "Issue not found")
+    return issue
+
+
+def _issue_path_or_404(issue) -> Path:
+    path = Path(issue["file_path"])
+    if not path.exists() or not path.is_file():
+        raise HTTPError(404, "Issue file missing")
+    return path
+
+
+def _header_filename(filename: str) -> str:
+    return filename.replace("\\", "_").replace('"', "_")
+
+
+def issue_viewer_page(issue) -> str:
+    title = f"{issue['magazine_title']} - {issue['issue_key']}"
+    body = f"""
+    <section class="viewer-shell">
+      <header class="viewer-bar">
+        <div>
+          <a href="/">Magazarr</a>
+          <h1>{html.escape(title)}</h1>
+          <div class="muted">{html.escape(issue["release_title"])}</div>
+        </div>
+        <a class="button-link secondary" href="/issues/{issue['id']}/file" target="_blank" rel="noreferrer">Open PDF</a>
+      </header>
+      <iframe class="pdf-viewer" src="/issues/{issue['id']}/file" title="{html.escape(title)}"></iframe>
+      <p class="viewer-fallback">
+        If PDF preview is unavailable, <a href="/issues/{issue['id']}/file">open the PDF directly</a>.
+      </p>
+    </section>
+    """
+    return page(title, body)
 
 
 def page(title: str, body: str) -> str:
@@ -1191,6 +1254,10 @@ def page(title: str, body: str) -> str:
       align-items: center;
       gap: 8px;
     }}
+    .brand-link {{
+      display: inline-flex;
+      align-items: center;
+    }}
     .brand-logo {{
       display: block;
       width: 190px;
@@ -1447,6 +1514,40 @@ def page(title: str, body: str) -> str:
       color: var(--muted);
       padding: 16px 0;
     }}
+    .viewer-shell {{
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      height: 100vh;
+      background: var(--bg);
+    }}
+    .viewer-bar {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }}
+    .viewer-bar h1 {{
+      margin: 4px 0;
+      font-size: 18px;
+      overflow-wrap: anywhere;
+    }}
+    .pdf-viewer {{
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: var(--panel);
+    }}
+    .viewer-fallback {{
+      margin: 0;
+      padding: 10px 18px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      background: var(--panel);
+    }}
     button:hover, .button-link:hover {{
       filter: brightness(0.97);
     }}
@@ -1542,6 +1643,10 @@ def page(title: str, body: str) -> str:
       .download-actions .button-link {{
         justify-content: center;
         width: 100%;
+      }}
+      .viewer-bar {{
+        align-items: stretch;
+        flex-direction: column;
       }}
       .toolbar {{
         grid-template-columns: 1fr;
