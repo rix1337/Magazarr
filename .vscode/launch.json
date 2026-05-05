@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Magazarr",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Magazarr.py",
+      "console": "integratedTerminal",
+      "consoleTitle": "Magazarr",
+      "env": {
+        "PORT": "8090",
+        "LISTEN": "127.0.0.1",
+        "MAGAZARR_CONFIG_DIR": "${workspaceFolder}/data"
+      },
+      "justMyCode": true
+    }
+  ]
+}

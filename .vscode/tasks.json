@@ -1,0 +1,52 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Setup",
+      "type": "shell",
+      "command": "uv sync --group dev --group build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Magazarr",
+      "type": "shell",
+      "command": "uv run magazarr",
+      "options": {
+        "env": {
+          "PORT": "8090",
+          "LISTEN": "127.0.0.1",
+          "MAGAZARR_CONFIG_DIR": "${workspaceFolder}/data"
+        }
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Checks",
+      "type": "shell",
+      "command": "uv run pre-commit.py --ci",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Wheel",
+      "type": "shell",
+      "command": "uv build",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Docker Local",
+      "type": "shell",
+      "command": "uv build && mkdir -p docker/dist && cp dist/*.whl docker/dist/ && docker build -t magazarr:local docker",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Clean Generated",
+      "type": "shell",
+      "command": "rm -rf .venv .pytest_cache .ruff_cache dist docker/dist magazarr/__pycache__ tests/__pycache__",
+      "problemMatcher": []
+    }
+  ]
+}

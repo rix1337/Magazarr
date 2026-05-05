@@ -1,0 +1,15 @@
+services:
+  magazarr:
+    container_name: Magazarr
+    image: ghcr.io/your-github-user/magazarr:latest
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./config:/config:rw
+      - ./library:/library:rw
+      - ./output:/output:rw
+    environment:
+      - TZ=Europe/Berlin
+      - PORT=8090
+      - LISTEN=0.0.0.0
+    restart: unless-stopped
