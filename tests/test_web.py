@@ -1,11 +1,16 @@
+from io import BytesIO
+from wsgiref.util import setup_testing_defaults
+
 from magazarr.db import Database
-from magazarr.settings import Settings
+from magazarr.settings import Settings, SettingsStore
 from magazarr.web import (
     _delete_download_package,
     _download_match_indexes,
     _download_still_in_quasarr,
     active_download_counts,
+    create_app,
     download_status_payload,
+    issue_payload,
     quasarr_public_url,
 )
 
@@ -249,3 +254,76 @@ def test_quasarr_public_url_prefers_external_url():
     )
 
     assert quasarr_public_url(settings) == "https://quasarr.example.test"
+
+
+def test_issue_payload_includes_viewer_urls(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    db.record_issue(
+        magazine["id"],
+        "2026-05",
+        "Magazine Title - 2026 05",
+        str(tmp_path / "issue.pdf"),
+        123,
+        None,
+    )
+
+    payload = issue_payload(db.issues()[0])
+
+    assert payload["view_url"] == f"/issues/{payload['id']}/view"
+    assert payload["file_url"] == f"/issues/{payload['id']}/file"
+
+
+def test_issue_viewer_serves_html_and_inline_pdf(tmp_path):
+    pdf = tmp_path / 'issue "quoted".pdf'
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    db.record_issue(
+        magazine["id"],
+        "2026-05",
+        "Magazine Title - 2026 05",
+        str(pdf),
+        pdf.stat().st_size,
+        None,
+    )
+    issue = db.issues()[0]
+    app = create_app(SettingsStore(tmp_path / "settings.json"), db)
+
+    status, headers, body = _wsgi_get(app, f"/issues/{issue['id']}/view")
+
+    assert status.startswith("200")
+    assert b'<iframe class="pdf-viewer"' in body
+    assert f"/issues/{issue['id']}/file".encode() in body
+
+    status, headers, body = _wsgi_get(app, f"/issues/{issue['id']}/file")
+
+    assert status.startswith("200")
+    assert headers["Content-Type"].startswith("application/pdf")
+    assert headers["Content-Disposition"] == 'inline; filename="issue _quoted_.pdf"'
+    assert body == pdf.read_bytes()
+
+
+def _wsgi_get(app, path: str):
+    environ = {}
+    setup_testing_defaults(environ)
+    environ.update(
+        {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": path,
+            "QUERY_STRING": "",
+            "wsgi.input": BytesIO(),
+        }
+    )
+    captured = {}
+
+    def start_response(status, headers, exc_info=None):
+        captured["status"] = status
+        captured["headers"] = dict(headers)
+
+    body = b"".join(app(environ, start_response))
+    return captured["status"], captured["headers"], body
