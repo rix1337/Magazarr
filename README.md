@@ -72,8 +72,6 @@ Magazarr uses the Quasarr Newznab/SABnzbd shim:
 - Download: `GET /api?mode=addurl&name=<quasarr download link>&cat=docs&apikey=<key>`
 - Import status: `GET /api?mode=history&apikey=<key>`
 
-The user agent is intentionally `lazylibrarian` because current Quasarr accepts generic document searches from that client string.
-
 ## OPDS
 
 OPDS root is:

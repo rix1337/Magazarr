@@ -1,4 +1,11 @@
-from magazarr.quasarr_client import QuasarrClient, parse_search_results
+from magazarr.quasarr_client import USER_AGENT, QuasarrClient, parse_search_results
+
+
+def test_client_uses_magazarr_user_agent():
+    client = QuasarrClient("http://quasarr", "key")
+
+    assert client.session.headers["User-Agent"] == USER_AGENT
+    assert USER_AGENT.startswith("Magazarr/")
 
 
 def test_parse_quasarr_search_results():
