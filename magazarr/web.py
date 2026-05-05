@@ -171,7 +171,10 @@ def create_app(settings_store: SettingsStore, db, automation=None):
             raise HTTPError(404, "Download package not found")
         client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
         if not client.delete_package(download["package_id"], download["release_title"]):
-            raise HTTPError(500, "Quasarr package delete failed")
+            queue, history = client.queue(), client.history()
+            by_package, by_title = _download_match_indexes([download])
+            if _download_still_in_quasarr(queue, history, by_package, by_title):
+                raise HTTPError(500, "Quasarr package delete failed")
         db.update_download_status(download_id, "deleted")
         db.record_event(
             "info",
@@ -260,6 +263,7 @@ def dashboard(settings, db) -> str:
         if hasattr(db, "blacklist_terms_by_magazine")
         else {}
     )
+    downloading_counts = active_download_counts(db, settings)
     return f"""
     <section class="topbar">
       <div class="topbar-inner">
@@ -293,7 +297,7 @@ def dashboard(settings, db) -> str:
           <div class="job-results" id="job-results"></div>
         </section>
         <div class="mag-list">
-          {magazine_rows(magazines, blacklist, db)}
+          {magazine_rows(magazines, blacklist, db, downloading_counts)}
         </div>
       </section>
     </main>
@@ -311,14 +315,15 @@ def input_row(label: str, name: str, value: str, input_type: str = "text") -> st
     )
 
 
-def magazine_rows(magazines, blacklist, db) -> str:
+def magazine_rows(magazines, blacklist, db, downloading_counts=None) -> str:
     rows = []
+    downloading_counts = downloading_counts or {}
     for mag in magazines:
         checked = "checked" if mag["active"] else ""
         blacklisted_terms = blacklist.get(mag["id"], [])
         skipped = db.skipped_release_count(magazine_id=mag["id"])
         errors = db.import_error_count(mag["id"])
-        downloading = db.download_count(mag["id"], ("snatched", "completed"))
+        downloading = downloading_counts.get(mag["id"], 0)
         rows.append(
             f"""
             <article class="mag-card">
@@ -350,6 +355,34 @@ def magazine_rows(magazines, blacklist, db) -> str:
             """
         )
     return "".join(rows) or '<div class="empty">No magazines.</div>'
+
+
+def active_download_counts(db, settings) -> dict[int, int]:
+    downloads = list(db.downloads())
+    by_package, by_title = _download_match_indexes(downloads)
+    counts: dict[int, int] = {}
+    try:
+        queue, history = fetch_quasarr_downloads(settings)
+        sync_download_errors(db, settings, downloads, queue, history)
+    except Exception:
+        for row in downloads:
+            if row["status"] in {"snatched", "completed"}:
+                magazine_id = row["magazine_id"]
+                counts[magazine_id] = counts.get(magazine_id, 0) + 1
+        return counts
+
+    seen = set()
+    for item in [*queue, *history]:
+        download = _download_for_quasarr_item(item, by_package, by_title)
+        if not download:
+            continue
+        download_id = download["id"]
+        if download_id in seen:
+            continue
+        seen.add(download_id)
+        magazine_id = download["magazine_id"]
+        counts[magazine_id] = counts.get(magazine_id, 0) + 1
+    return counts
 
 
 def magazine_cover(mag) -> str:
@@ -552,6 +585,13 @@ def download_status_payload(db, settings, magazine_id: int | None = None):
         active.append(download_card_payload(settings, item, download))
 
     return {"active": active, "error": "", "quasarr_url": quasarr_public_url(settings)}
+
+
+def _download_still_in_quasarr(queue, history, by_package, by_title) -> bool:
+    for item in [*queue, *history]:
+        if _download_for_quasarr_item(item, by_package, by_title):
+            return True
+    return False
 
 
 def _download_match_indexes(downloads):
