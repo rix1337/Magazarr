@@ -1,18 +1,39 @@
 from magazarr.db import Database
-from magazarr.importer import _import_one, _library_destination, import_completed
+from magazarr.importer import _import_one, _library_destination
 from magazarr.settings import Settings
 
 
-def test_missing_import_root_is_visible_event(tmp_path):
+def test_import_uses_quasarr_storage_without_import_root(tmp_path):
     db = Database(tmp_path / "magazarr.db")
     db.migrate()
+    source_dir = tmp_path / "Quasarr" / "RandomTitle"
+    source_dir.mkdir(parents=True)
+    (source_dir / "issue.pdf").write_bytes(b"%PDF-1.4")
+    settings = Settings(library_dir=str(tmp_path / "library"))
+    download = {
+        "id": 1,
+        "magazine_id": 42,
+        "magazine_title": "ct",
+        "issue_key": "2026-05-05",
+        "release_title": "ct 2026 05",
+        "package_id": "pkg",
+        "download_url": "https://example.test/download",
+        "size_bytes": 1234,
+    }
 
-    imported = import_completed(db, Settings(import_root=""))
+    assert _import_one(db, settings, download, str(source_dir))
 
-    events = db.events()
-    assert imported == []
-    assert events[0]["area"] == "import"
-    assert events[0]["message"] == "Import root missing; not importing"
+    assert not source_dir.exists()
+    assert (
+        tmp_path
+        / "library"
+        / "magazines"
+        / "42"
+        / "2026"
+        / "05"
+        / "ct"
+        / "2026-05-05 - issue.pdf"
+    ).exists()
 
 
 def test_library_destination_is_nested_and_filesystem_safe(tmp_path):
@@ -35,6 +56,27 @@ def test_library_destination_is_nested_and_filesystem_safe(tmp_path):
         / "Der Spiegel Wissen Plus"
         / "2026-04-02 - source copy.pdf"
     )
+
+
+def test_blank_quasarr_storage_does_not_import_from_cwd(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    settings = Settings(library_dir=str(tmp_path / "library"))
+    download = {
+        "id": 1,
+        "magazine_id": 42,
+        "magazine_title": "ct",
+        "issue_key": "2026-05-05",
+        "release_title": "ct 2026 05",
+        "package_id": "pkg",
+        "download_url": "https://example.test/download",
+        "size_bytes": 1234,
+    }
+
+    assert not _import_one(db, settings, download, "")
+
+    events = db.events()
+    assert events[0]["message"] == "Storage path missing from Quasarr history"
 
 
 def test_import_flat_pdf_does_not_delete_import_root(tmp_path):

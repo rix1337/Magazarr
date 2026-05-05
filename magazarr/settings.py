@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
 
 import json
-from dataclasses import asdict, dataclass
+import os
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+
+def default_library_dir() -> str:
+    if os.environ.get("DOCKER"):
+        return "/library"
+    return "library"
 
 
 @dataclass
@@ -16,7 +23,7 @@ class Settings:
     past_days: int = 45
     min_size_mb: int = 1
     max_size_mb: int = 0
-    library_dir: str = "library"
+    library_dir: str = field(default_factory=default_library_dir)
     import_root: str = ""
     automation_interval_minutes: int = 60
     import_check_interval_minutes: int = 5
@@ -40,6 +47,8 @@ class SettingsStore:
             data = {}
         defaults = asdict(Settings())
         defaults.update({k: v for k, v in data.items() if k in defaults})
+        if os.environ.get("DOCKER") and defaults["library_dir"] == "library":
+            defaults["library_dir"] = "/library"
         return Settings(**defaults)
 
     def save(self, settings: Settings):
@@ -68,7 +77,6 @@ class SettingsStore:
         settings.min_size_mb = _int(form.get("min_size_mb"), 1)
         settings.max_size_mb = _int(form.get("max_size_mb"), 0)
         settings.library_dir = str(form.get("library_dir", "")).strip()
-        settings.import_root = str(form.get("import_root", "")).strip()
         settings.automation_interval_minutes = _int(
             form.get("automation_interval_minutes"), 60
         )

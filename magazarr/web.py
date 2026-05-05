@@ -418,7 +418,6 @@ def settings_modal(settings) -> str:
           <fieldset class="settings-card">
             <legend>Storage</legend>
             {input_row("Library Dir", "library_dir", settings.library_dir)}
-            {input_row("Import Root", "import_root", settings.import_root)}
           </fieldset>
           <fieldset class="settings-card">
             <legend>OPDS</legend>

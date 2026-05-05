@@ -6,6 +6,20 @@ def test_default_automation_interval_is_60_minutes():
     assert Settings().import_check_interval_minutes == 5
 
 
+def test_docker_default_library_dir_is_absolute(monkeypatch):
+    monkeypatch.setenv("DOCKER", "true")
+
+    assert Settings().library_dir == "/library"
+
+
+def test_docker_load_migrates_relative_default_library_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOCKER", "true")
+    store = SettingsStore(tmp_path / "settings.json")
+    settings = store.load()
+
+    assert settings.library_dir == "/library"
+
+
 def test_settings_form_updates_automation_interval(tmp_path):
     store = SettingsStore(tmp_path / "settings.json")
 
@@ -21,7 +35,6 @@ def test_settings_form_updates_automation_interval(tmp_path):
             "min_size_mb": "1",
             "max_size_mb": "0",
             "library_dir": "library",
-            "import_root": "/downloads",
             "automation_interval_minutes": "15",
             "import_check_interval_minutes": "4",
             "opds_page_size": "50",
