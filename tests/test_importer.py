@@ -55,6 +55,7 @@ def test_completed_history_imports_quasarr_storage(tmp_path, monkeypatch):
     source_dir = tmp_path / "Quasarr" / "Magazine Title - 2026 05"
     source_dir.mkdir(parents=True)
     (source_dir / "magazine-title.pdf").write_bytes(b"%PDF-1.4")
+    deleted_packages = []
 
     class FakeQuasarrClient:
         def __init__(self, base_url, api_key):
@@ -70,6 +71,10 @@ def test_completed_history_imports_quasarr_storage(tmp_path, monkeypatch):
                 },
             ]
 
+        def delete_package(self, package_id, title=""):
+            deleted_packages.append((package_id, title))
+            return True
+
     monkeypatch.setattr(importer, "QuasarrClient", FakeQuasarrClient)
 
     imported = import_completed(
@@ -82,6 +87,7 @@ def test_completed_history_imports_quasarr_storage(tmp_path, monkeypatch):
     )
 
     assert imported == ["Magazine Title - 2026 05"]
+    assert deleted_packages == [(package_id, "Magazine Title - 2026 05")]
     assert db.downloads()[0]["status"] == "imported"
     assert (
         tmp_path
@@ -115,6 +121,7 @@ def test_completed_history_imports_when_quasarr_returns_uuid_nzo_id(
     source_dir = tmp_path / "Quasarr" / "Magazine Title - 2026 05"
     source_dir.mkdir(parents=True)
     (source_dir / "magazine-title.pdf").write_bytes(b"%PDF-1.4")
+    deleted_packages = []
 
     class FakeQuasarrClient:
         def __init__(self, base_url, api_key):
@@ -130,6 +137,10 @@ def test_completed_history_imports_when_quasarr_returns_uuid_nzo_id(
                 },
             ]
 
+        def delete_package(self, package_id, title=""):
+            deleted_packages.append((package_id, title))
+            return package_id == "Quasarr_docs_123"
+
     monkeypatch.setattr(importer, "QuasarrClient", FakeQuasarrClient)
 
     imported = import_completed(
@@ -142,6 +153,10 @@ def test_completed_history_imports_when_quasarr_returns_uuid_nzo_id(
     )
 
     assert imported == ["Magazine Title - 2026 05"]
+    assert deleted_packages == [
+        ("jd-package-uuid", "Magazine Title - 2026 05"),
+        ("Quasarr_docs_123", "Magazine Title - 2026 05"),
+    ]
     assert db.downloads()[0]["status"] == "imported"
 
 
