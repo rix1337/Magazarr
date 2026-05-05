@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import base64
+import binascii
 import hmac
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,13 +28,13 @@ ElementTree.register_namespace("", NS)
 def require_opds_auth(settings: Settings):
     if not settings.opds_auth_enabled:
         return
-    header = request.get_header("Authorization", "")
-    if not header.startswith("Basic "):
+    scheme, _, credentials = request.get_header("Authorization", "").partition(" ")
+    if scheme.lower() != "basic" or not credentials:
         _auth_challenge()
     try:
-        decoded = base64.b64decode(header[6:]).decode("utf-8")
+        decoded = base64.b64decode(credentials, validate=True).decode("utf-8")
         username, password = decoded.split(":", 1)
-    except (ValueError, UnicodeDecodeError):
+    except (binascii.Error, ValueError, UnicodeDecodeError):
         _auth_challenge()
     if not (
         hmac.compare_digest(username, settings.opds_username)
@@ -242,5 +243,8 @@ def _offset() -> int:
 
 
 def _auth_challenge():
-    response.set_header("WWW-Authenticate", 'Basic realm="Magazarr OPDS"')
-    raise HTTPError(401, "OPDS authentication required")
+    raise HTTPError(
+        401,
+        "OPDS authentication required",
+        **{"WWW-Authenticate": 'Basic realm="Magazarr OPDS"'},
+    )

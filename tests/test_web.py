@@ -1,6 +1,7 @@
 from magazarr.db import Database
 from magazarr.settings import Settings
 from magazarr.web import (
+    _delete_download_package,
     _download_match_indexes,
     _download_still_in_quasarr,
     active_download_counts,
@@ -204,6 +205,41 @@ def test_delete_failure_errors_when_package_remains_in_quasarr(tmp_path):
         by_package,
         by_title,
     )
+
+
+def test_manual_delete_package_marks_release_skipped(tmp_path, monkeypatch):
+    import magazarr.web as web
+
+    class FakeQuasarrClient:
+        def __init__(self, base_url, api_key):
+            self.base_url = base_url
+            self.api_key = api_key
+
+        def delete_package(self, package_id, title=""):
+            return True
+
+    monkeypatch.setattr(web, "QuasarrClient", FakeQuasarrClient)
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    db.record_manual_download(
+        magazine["id"],
+        "2026-05-01",
+        "Magazine Title - 2026 05",
+        "https://example.test/magazine-title",
+        1234,
+        "Quasarr_docs_123",
+    )
+    download = db.downloads()[0]
+
+    _delete_download_package(db, Settings(), download["id"])
+
+    updated = db.downloads()[0]
+    assert updated["status"] == "deleted"
+    skipped = db.skipped_releases(magazine_id=magazine["id"])
+    assert skipped[0]["release_title"] == "Magazine Title - 2026 05"
+    assert skipped[0]["reason"] == "Deleted manually"
 
 
 def test_quasarr_public_url_prefers_external_url():
