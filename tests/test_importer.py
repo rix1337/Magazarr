@@ -1,9 +1,9 @@
 from magazarr.db import Database
-from magazarr.importer import _import_one, _library_destination
+from magazarr.importer import _import_one, _library_destination, import_completed
 from magazarr.settings import Settings
 
 
-def test_import_uses_quasarr_storage_without_import_root(tmp_path):
+def test_import_uses_absolute_quasarr_storage(tmp_path):
     db = Database(tmp_path / "magazarr.db")
     db.migrate()
     source_dir = tmp_path / "Quasarr" / "RandomTitle"
@@ -34,6 +34,115 @@ def test_import_uses_quasarr_storage_without_import_root(tmp_path):
         / "ct"
         / "2026-05-05 - issue.pdf"
     ).exists()
+
+
+def test_completed_history_imports_quasarr_storage(tmp_path, monkeypatch):
+    import magazarr.importer as importer
+
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("GameStar")
+    magazine = db.magazines()[0]
+    package_id = "Quasarr_docs_123"
+    db.record_manual_download(
+        magazine["id"],
+        "2026-05-01",
+        "GameStar - 2026 05",
+        "https://example.test/download",
+        1234,
+        package_id,
+    )
+    source_dir = tmp_path / "Quasarr" / "GameStar - 2026 05"
+    source_dir.mkdir(parents=True)
+    (source_dir / "gamestar.pdf").write_bytes(b"%PDF-1.4")
+
+    class FakeQuasarrClient:
+        def __init__(self, base_url, api_key):
+            pass
+
+        def history(self):
+            return [
+                {
+                    "nzo_id": package_id,
+                    "status": " completed ",
+                    "storage": str(source_dir),
+                    "name": "GameStar - 2026 05",
+                },
+            ]
+
+    monkeypatch.setattr(importer, "QuasarrClient", FakeQuasarrClient)
+
+    imported = import_completed(
+        db,
+        Settings(
+            quasarr_url="http://quasarr",
+            quasarr_api_key="key",
+            library_dir=str(tmp_path / "library"),
+        ),
+    )
+
+    assert imported == ["GameStar - 2026 05"]
+    assert db.downloads()[0]["status"] == "imported"
+    assert (
+        tmp_path
+        / "library"
+        / "magazines"
+        / str(magazine["id"])
+        / "2026"
+        / "05"
+        / "GameStar"
+        / "2026-05-01 - gamestar.pdf"
+    ).exists()
+
+
+def test_history_waits_for_quasarr_completed_status(tmp_path, monkeypatch):
+    import magazarr.importer as importer
+
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("GameStar")
+    magazine = db.magazines()[0]
+    package_id = "Quasarr_docs_123"
+    db.record_manual_download(
+        magazine["id"],
+        "2026-05-01",
+        "GameStar - 2026 05",
+        "https://example.test/download",
+        1234,
+        package_id,
+    )
+    source_dir = tmp_path / "Quasarr" / "GameStar - 2026 05"
+    source_dir.mkdir(parents=True)
+    (source_dir / "gamestar.pdf").write_bytes(b"%PDF-1.4")
+
+    class FakeQuasarrClient:
+        def __init__(self, base_url, api_key):
+            pass
+
+        def history(self):
+            return [
+                {
+                    "nzo_id": package_id,
+                    "status": "Downloading",
+                    "storage": str(source_dir),
+                    "name": "GameStar - 2026 05",
+                },
+            ]
+
+    monkeypatch.setattr(importer, "QuasarrClient", FakeQuasarrClient)
+
+    imported = import_completed(
+        db,
+        Settings(
+            quasarr_url="http://quasarr",
+            quasarr_api_key="key",
+            library_dir=str(tmp_path / "library"),
+        ),
+    )
+
+    assert imported == []
+    assert db.downloads()[0]["status"] == "snatched"
+    assert (source_dir / "gamestar.pdf").exists()
 
 
 def test_library_destination_is_nested_and_filesystem_safe(tmp_path):

@@ -22,7 +22,7 @@ def import_completed(db, settings: Settings) -> list[str]:
         item = history_by_id.get(str(download["package_id"]))
         if not item:
             continue
-        if item.get("status") == "Failed":
+        if _history_status(item) == "failed":
             db.update_download_storage(
                 download["id"],
                 str(item.get("storage") or "").strip(),
@@ -35,7 +35,7 @@ def import_completed(db, settings: Settings) -> list[str]:
                 download,
             )
             continue
-        if item.get("status") != "Completed":
+        if _history_status(item) != "completed":
             continue
         storage = str(item.get("storage") or "").strip()
         db.update_download_storage(download["id"], storage, "completed")
@@ -44,6 +44,10 @@ def import_completed(db, settings: Settings) -> list[str]:
         else:
             db.update_download_storage(download["id"], storage, "import_error")
     return imported
+
+
+def _history_status(item: dict) -> str:
+    return str(item.get("status") or "").strip().lower()
 
 
 def _import_one(db, settings: Settings, download, storage: str) -> bool:

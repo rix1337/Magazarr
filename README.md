@@ -34,6 +34,7 @@ docker run --rm \
   -p 8090:8090 \
   -v "$PWD/config:/config" \
   -v "$PWD/library:/library" \
+  -v "$PWD/output:/output" \
   magazarr:local
 ```
 
@@ -42,7 +43,7 @@ Compose template lives at `docker/docker-compose.yml`. Replace `ghcr.io/your-git
 ## Required Settings
 
 - Quasarr URL and API key.
-- Completed package folders reported by Quasarr must be visible to Magazarr at the same path before Magazarr imports the PDF and deletes the completed package folder.
+- Completed package folders reported by Quasarr must be visible to Magazarr at the exact path returned in Quasarr history.
 - Library directory for imported PDFs. Docker defaults to `/library`; local runs default to `library`.
 
 ## Run Quasarr Locally For Testing
