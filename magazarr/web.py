@@ -163,25 +163,7 @@ def create_app(settings_store: SettingsStore, db, automation=None):
     @app.post("/downloads/<download_id:int>/delete-package")
     def delete_download_package(download_id):
         settings = settings_store.load()
-        download = next(
-            (item for item in db.downloads() if int(item["id"]) == int(download_id)),
-            None,
-        )
-        if not download or not download["package_id"]:
-            raise HTTPError(404, "Download package not found")
-        client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
-        if not client.delete_package(download["package_id"], download["release_title"]):
-            queue, history = client.queue(), client.history()
-            by_package, by_title = _download_match_indexes([download])
-            if _download_still_in_quasarr(queue, history, by_package, by_title):
-                raise HTTPError(500, "Quasarr package delete failed")
-        db.update_download_status(download_id, "deleted")
-        db.record_event(
-            "info",
-            "download",
-            "Deleted download package",
-            download["release_title"],
-        )
+        _delete_download_package(db, settings, download_id)
         redirect("/")
 
     @app.post("/issues/<issue_id:int>/delete")
@@ -611,6 +593,30 @@ def _download_for_quasarr_item(item, by_package, by_title):
     if download:
         return download
     return by_title.get(_download_title_key(item.get("name") or item.get("filename")))
+
+
+def _delete_download_package(db, settings, download_id: int):
+    download = next(
+        (item for item in db.downloads() if int(item["id"]) == int(download_id)),
+        None,
+    )
+    if not download or not download["package_id"]:
+        raise HTTPError(404, "Download package not found")
+    client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
+    if not client.delete_package(download["package_id"], download["release_title"]):
+        queue, history = client.queue(), client.history()
+        by_package, by_title = _download_match_indexes([download])
+        if _download_still_in_quasarr(queue, history, by_package, by_title):
+            raise HTTPError(500, "Quasarr package delete failed")
+    db.update_download_status(download_id, "deleted")
+    if hasattr(db, "record_skipped_download"):
+        db.record_skipped_download(download, "Deleted manually")
+    db.record_event(
+        "info",
+        "download",
+        "Deleted download package",
+        download["release_title"],
+    )
 
 
 def _download_title_key(value) -> str:
