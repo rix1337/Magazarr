@@ -1,0 +1,18 @@
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+dist/
+docker/dist/
+
+# Local runtime and imported media. Never commit database or library content.
+/data/
+/library/
+/downloads/
+/imports/
+*.db
+*.sqlite
+*.sqlite3
+
+.DS_Store

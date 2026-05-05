@@ -1,0 +1,274 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_pypi:
+        default: false
+        description: "Skip PyPI upload"
+        type: boolean
+  push:
+    paths-ignore:
+      - ".github/**"
+      - "docker/**"
+    branches:
+      - main
+
+env:
+  PACKAGE_NAME: magazarr
+  GHCR_ENDPOINT: ghcr.io/${{ github.repository_owner }}/magazarr
+  DOCKERHUB_ENDPOINT: ${{ github.repository_owner }}/docker-magazarr
+  DESCRIPTION: "Magazarr manages magazine downloads through Quasarr and exposes OPDS."
+
+jobs:
+  version:
+    name: Get Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Get Version
+        id: version
+        run: |
+          VERSION=$(uv run python magazarr/version.py)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+  build-wheel:
+    name: Build Wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      attestation-id: ${{ steps.attest.outputs.attestation-id }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Run checks
+        run: |
+          uv sync --group dev
+          uv run pre-commit.py --ci
+      - name: Build wheel
+        run: uv build
+      - name: Generate artifact attestation
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*.whl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: ./dist/*
+
+  build-docker-amd64:
+    name: Build Docker (AMD64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [version, build-wheel]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: ./docker/dist
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERUSER }}
+          password: ${{ secrets.DOCKERPASS }}
+      - name: Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          annotations: |
+            org.opencontainers.image.description=${{ env.DESCRIPTION }}
+          tags: |
+            ${{ env.GHCR_ENDPOINT }}:latest-amd64
+            ${{ env.GHCR_ENDPOINT }}:${{ needs.version.outputs.version }}-amd64
+            ${{ env.DOCKERHUB_ENDPOINT }}:latest-amd64
+            ${{ env.DOCKERHUB_ENDPOINT }}:${{ needs.version.outputs.version }}-amd64
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+
+  build-docker-arm64:
+    name: Build Docker (ARM64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    needs: [version, build-wheel]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: ./docker/dist
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERUSER }}
+          password: ${{ secrets.DOCKERPASS }}
+      - name: Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          annotations: |
+            org.opencontainers.image.description=${{ env.DESCRIPTION }}
+          tags: |
+            ${{ env.GHCR_ENDPOINT }}:latest-arm64
+            ${{ env.GHCR_ENDPOINT }}:${{ needs.version.outputs.version }}-arm64
+            ${{ env.DOCKERHUB_ENDPOINT }}:latest-arm64
+            ${{ env.DOCKERHUB_ENDPOINT }}:${{ needs.version.outputs.version }}-arm64
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+  merge-docker-manifest:
+    name: Merge Docker Manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [version, build-docker-amd64, build-docker-arm64]
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERUSER }}
+          password: ${{ secrets.DOCKERPASS }}
+      - name: Create and Push Manifests
+        run: |
+          TAG_AMD64="${{ needs.version.outputs.version }}-amd64"
+          TAG_ARM64="${{ needs.version.outputs.version }}-arm64"
+          ANNOTATION="index:org.opencontainers.image.description=$DESCRIPTION"
+          docker buildx imagetools create -t ${{ env.GHCR_ENDPOINT }}:latest --annotation "$ANNOTATION" ${{ env.GHCR_ENDPOINT }}:latest-amd64 ${{ env.GHCR_ENDPOINT }}:latest-arm64
+          docker buildx imagetools create -t ${{ env.GHCR_ENDPOINT }}:${{ needs.version.outputs.version }} --annotation "$ANNOTATION" ${{ env.GHCR_ENDPOINT }}:${TAG_AMD64} ${{ env.GHCR_ENDPOINT }}:${TAG_ARM64}
+          docker buildx imagetools create -t ${{ env.DOCKERHUB_ENDPOINT }}:latest ${{ env.DOCKERHUB_ENDPOINT }}:latest-amd64 ${{ env.DOCKERHUB_ENDPOINT }}:latest-arm64
+          docker buildx imagetools create -t ${{ env.DOCKERHUB_ENDPOINT }}:${{ needs.version.outputs.version }} ${{ env.DOCKERHUB_ENDPOINT }}:${TAG_AMD64} ${{ env.DOCKERHUB_ENDPOINT }}:${TAG_ARM64}
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [version, build-wheel, merge-docker-manifest]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: ./wheel
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Publish to PyPI
+        if: ${{ !inputs.skip_pypi }}
+        run: uv publish ./wheel/* --token ${{ secrets.PYPI_TOKEN }}
+      - name: Generate changelog
+        run: |
+          set -euo pipefail
+
+          latest_tag="$(git describe --tags --match 'v.*' --abbrev=0 2>/dev/null || true)"
+          if [ -n "$latest_tag" ]; then
+            title="Changes since $latest_tag"
+            range="$latest_tag..HEAD"
+          else
+            title="Changes"
+            range=""
+          fi
+
+          {
+            echo "### Changelog:"
+            echo "$title"
+            echo
+          } > changelog.md
+
+          if [ -n "$range" ]; then
+            git log --no-merges --pretty=format:'- %s (%h)' "$range" >> changelog.md
+          else
+            git log --no-merges --pretty=format:'- %s (%h)' >> changelog.md
+          fi
+
+          if [ ! -s changelog.md ] || [ "$(wc -l < changelog.md)" -le 3 ]; then
+            echo "- No changes." >> changelog.md
+          fi
+      - name: Create Release Body
+        run: |
+          echo "### Docker:" > release_body.md
+          echo "\`docker pull ${{ env.GHCR_ENDPOINT }}:latest\`" >> release_body.md
+          echo "### Python:" >> release_body.md
+          echo "\`uv tool upgrade magazarr\`" >> release_body.md
+          cat changelog.md >> release_body.md
+          echo "[Attestation](https://github.com/${{ github.repository }}/attestations/${{ needs.build-wheel.outputs.attestation-id }})" >> release_body.md
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "./wheel/*.whl"
+          artifactErrorsFailBuild: true
+          bodyFile: "release_body.md"
+          tag: v.${{ needs.version.outputs.version }}
+
+  job-summary:
+    name: Build Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    needs: [version, build-wheel, build-docker-amd64, build-docker-arm64, release]
+    if: always()
+    steps:
+      - name: Generate Job Summary
+        run: |
+          echo "## Release Production Report" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Wheel | ${{ needs.build-wheel.result == 'success' && 'OK' || 'FAILED' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker AMD64 | ${{ needs.build-docker-amd64.result == 'success' && 'OK' || 'FAILED' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker ARM64 | ${{ needs.build-docker-arm64.result == 'success' && 'OK' || 'FAILED' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Release | ${{ needs.release.result == 'success' && 'Published' || 'FAILED' }} |" >> $GITHUB_STEP_SUMMARY
