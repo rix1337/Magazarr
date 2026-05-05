@@ -6,7 +6,9 @@ from xml.etree import ElementTree
 
 import requests
 
-USER_AGENT = "lazylibrarian"
+from magazarr.version import get_version
+
+USER_AGENT = f"Magazarr/{get_version()}"
 TIMEOUT = 60
 SEARCH_PAGE_LIMIT = 100
 
