@@ -24,25 +24,25 @@ class FakeDb:
 
 def test_filter_candidates_prefers_valid_recent_unseen_results():
     settings = SimpleNamespace(past_days=999, min_size_mb=1, max_size_mb=0)
-    magazine = {"id": 7, "title": "Linux Format"}
+    magazine = {"id": 7, "title": "Magazine Title Three"}
     results = [
         QuasarrResult(
-            "Linux Format May 2026",
-            "http://example/1",
+            "Magazine Title Three May 2026",
+            "https://example.test/1",
             "Tue, 05 May 2026 10:00:00 +0000",
             50 * 1024 * 1024,
             "quasarr",
         ),
         QuasarrResult(
-            "Maximum PC May 2026",
-            "http://example/2",
+            "Example Monthlyum PC May 2026",
+            "https://example.test/2",
             "Tue, 05 May 2026 10:00:00 +0000",
             50 * 1024 * 1024,
             "quasarr",
         ),
         QuasarrResult(
-            "Linux Format April 2026",
-            "http://example/3",
+            "Magazine Title Three April 2026",
+            "https://example.test/3",
             "Tue, 05 May 2026 10:00:00 +0000",
             50 * 1024 * 1024,
             "quasarr",
@@ -53,15 +53,15 @@ def test_filter_candidates_prefers_valid_recent_unseen_results():
 
     candidates = filter_candidates(db, settings, magazine, results)
 
-    assert [item.title for item in candidates] == ["Linux Format May 2026"]
+    assert [item.title for item in candidates] == ["Magazine Title Three May 2026"]
     assert db.skipped == [
-        (7, "Linux Format April 2026", "duplicate", "2026-04-01"),
+        (7, "Magazine Title Three April 2026", "duplicate", "2026-04-01"),
     ]
 
 
 def test_filter_candidates_skips_old_pub_dates_before_issue_parsing():
     settings = SimpleNamespace(past_days=45, min_size_mb=1, max_size_mb=0)
-    magazine = {"id": 7, "title": "Linux Format"}
+    magazine = {"id": 7, "title": "Magazine Title Three"}
     db = FakeDb()
 
     candidates = filter_candidates(
@@ -70,8 +70,8 @@ def test_filter_candidates_skips_old_pub_dates_before_issue_parsing():
         magazine,
         [
             QuasarrResult(
-                "Linux Format 2023",
-                "http://example/old",
+                "Magazine Title Three 2023",
+                "https://example.test/old",
                 "Tue, 01 Aug 2023 10:00:00 +0000",
                 50 * 1024 * 1024,
                 "quasarr",
@@ -85,9 +85,9 @@ def test_filter_candidates_skips_old_pub_dates_before_issue_parsing():
 
 def test_filter_candidates_uses_blacklist_terms():
     settings = SimpleNamespace(past_days=999, min_size_mb=1, max_size_mb=0)
-    magazine = {"id": 7, "title": "ct"}
+    magazine = {"id": 7, "title": "Magazine Title"}
     db = FakeDb()
-    db.blacklist = ["ct fotografie"]
+    db.blacklist = ["Magazine Title Photo"]
 
     candidates = filter_candidates(
         db,
@@ -95,8 +95,8 @@ def test_filter_candidates_uses_blacklist_terms():
         magazine,
         [
             QuasarrResult(
-                "ct Fotografie 2026",
-                "http://example/blacklisted",
+                "Magazine Title Photo 2026",
+                "https://example.test/blacklisted",
                 "Tue, 05 May 2026 10:00:00 +0000",
                 50 * 1024 * 1024,
                 "quasarr",
@@ -105,7 +105,7 @@ def test_filter_candidates_uses_blacklist_terms():
     )
 
     assert candidates == []
-    assert db.skipped == [(7, "ct Fotografie 2026", "blacklisted", "")]
+    assert db.skipped == [(7, "Magazine Title Photo 2026", "blacklisted", "")]
 
 
 def test_search_progress_does_not_emit_raw_found_events(monkeypatch):
@@ -117,7 +117,7 @@ def test_search_progress_does_not_emit_raw_found_events(monkeypatch):
             results = [
                 QuasarrResult(
                     "Wrong Magazine 2026",
-                    "http://example/wrong",
+                    "https://example.test/wrong",
                     "Tue, 05 May 2026 10:00:00 +0000",
                     50 * 1024 * 1024,
                     "quasarr",
@@ -143,7 +143,7 @@ def test_search_progress_does_not_emit_raw_found_events(monkeypatch):
             min_size_mb=1,
             max_size_mb=0,
         ),
-        {"id": 7, "title": "ct"},
+        {"id": 7, "title": "Magazine Title"},
         events.append,
     )
 
@@ -161,13 +161,13 @@ def test_numbered_release_is_duplicate_when_matching_dated_issue_exists():
             return [
                 {
                     "issue_key": "2026-04-30",
-                    "release_title": "Der Spiegel Nachrichtenmagazin 2026 04 30",
+                    "release_title": "Magazine Title News Magazine 2026 04 30",
                     "pub_date": "",
                 }
             ]
 
     settings = SimpleNamespace(past_days=999, min_size_mb=1, max_size_mb=0)
-    magazine = {"id": 7, "title": "Der Spiegel"}
+    magazine = {"id": 7, "title": "Magazine Title"}
     db = ExistingDateDb()
 
     candidates = filter_candidates(
@@ -176,22 +176,22 @@ def test_numbered_release_is_duplicate_when_matching_dated_issue_exists():
         magazine,
         [
             QuasarrResult(
-                "Der Spiegel No 18 2026",
-                "http://example/18",
+                "Magazine Title No 18 2026",
+                "https://example.test/18",
                 "Tue, 05 May 2026 10:00:00 +0000",
                 50 * 1024 * 1024,
                 "quasarr",
             ),
             QuasarrResult(
-                "Der Spiegel No 19 2026",
-                "http://example/19",
+                "Magazine Title No 19 2026",
+                "https://example.test/19",
                 "Tue, 05 May 2026 10:00:00 +0000",
                 50 * 1024 * 1024,
                 "quasarr",
             ),
             QuasarrResult(
-                "Der Spiegel No 20 2026",
-                "http://example/20",
+                "Magazine Title No 20 2026",
+                "https://example.test/20",
                 "Tue, 05 May 2026 10:00:00 +0000",
                 50 * 1024 * 1024,
                 "quasarr",
@@ -200,7 +200,7 @@ def test_numbered_release_is_duplicate_when_matching_dated_issue_exists():
     )
 
     assert [item.title for item in candidates] == [
-        "Der Spiegel No 18 2026",
-        "Der Spiegel No 20 2026",
+        "Magazine Title No 18 2026",
+        "Magazine Title No 20 2026",
     ]
-    assert db.skipped == [(7, "Der Spiegel No 19 2026", "duplicate", "2026-issue-0019")]
+    assert db.skipped == [(7, "Magazine Title No 19 2026", "duplicate", "2026-issue-0019")]

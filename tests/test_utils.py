@@ -17,42 +17,44 @@ def test_search_term_matches_lazylibrarian_style_cleanup():
 
 
 def test_title_match_uses_tokens_not_substrings():
-    assert magazine_title_matches("Maxim USA", "Maxim USA May 2026")
-    assert not magazine_title_matches("Maxim", "Maximum PC May 2026")
-    assert not magazine_title_matches("ct", "Cthulhus Ruf - Hajo Bremer")
-    assert magazine_title_matches("Der Spiegel", "Der Spiegel No 19 2026")
+    assert magazine_title_matches("Example Monthly USA", "Example Monthly USA May 2026")
+    assert not magazine_title_matches("Example Monthly", "Example Monthlyum PC May 2026")
+    assert not magazine_title_matches("Magazine Title", "Unrelated Book - Example Author")
+    assert magazine_title_matches("Magazine Title", "Magazine Title No 19 2026")
     assert not magazine_title_matches(
-        "Der Spiegel",
-        "Der Tod wird euch finden - Ein SPIEGEL-Buch - Lawrence Wright",
+        "Magazine Title",
+        "Unrelated Book - Example Author",
     )
-    assert not magazine_title_matches("Der Spiegel", "DeepViolette - Der Spiegel")
+    assert not magazine_title_matches("Magazine Title", "Unrelated Title - Magazine Title")
 
 
 def test_blacklist_term_uses_token_sequence():
-    assert token_sequence_matches("ct fotografie", "ct Fotografie 2026")
-    assert not token_sequence_matches("ct fotografie", "ct Sonderheft Fotografie")
+    assert token_sequence_matches("Magazine Title Photo", "Magazine Title Photo 2026")
+    assert not token_sequence_matches("Magazine Title Photo", "Magazine Title Special Photo Issue")
 
 
 def test_parse_month_year_issue_date():
-    issue = parse_issue_date("Linux Format May 2026")
+    issue = parse_issue_date("Magazine Title Three May 2026")
     assert issue is not None
     assert issue.key == "2026-05-01"
 
 
 def test_parse_day_month_year_issue_date():
-    issue = parse_issue_date("The Week 14 May 2026")
+    issue = parse_issue_date("Weekly Title 14 May 2026")
     assert issue is not None
     assert issue.key == "2026-05-14"
 
 
 def test_parse_issue_number():
-    issue = parse_issue_date("Linux Format Issue 116 - KDE")
+    issue = parse_issue_date("Magazine Title Three Issue 116 - Desktop Topic")
     assert issue is not None
     assert issue.key == "issue-0116"
 
 
 def test_parse_numbered_magazine_release():
-    number = parse_issue_number("Der.Spiegel.No.23.2024.GERMAN.Retail.MAGAZiNE.eBook")
+    number = parse_issue_number(
+        "Magazine.Title.No.23.2024.GERMAN.Retail.MAGAZiNE.eBook"
+    )
 
     assert number is not None
     assert number.year == 2024
@@ -62,17 +64,17 @@ def test_parse_numbered_magazine_release():
 def test_weekly_number_aliases_can_match_dated_titles():
     modes = infer_numbering_modes(
         [
-            "Der Spiegel No 18 2026",
-            "Der Spiegel No 19 2026",
-            "Der Spiegel No 20 2026",
+            "Magazine Title No 18 2026",
+            "Magazine Title No 19 2026",
+            "Magazine Title No 20 2026",
         ]
     )
-    issue = parse_issue_date("Der Spiegel Nachrichtenmagazin 2026 04 30")
+    issue = parse_issue_date("Magazine Title News Magazine 2026 04 30")
 
     assert modes == {2026: "weekly"}
     assert issue is not None
     assert "2026-issue-0019" in issue_aliases(
-        "Der Spiegel Nachrichtenmagazin 2026 04 30",
+        "Magazine Title News Magazine 2026 04 30",
         "",
         issue,
         modes,

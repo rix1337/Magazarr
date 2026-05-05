@@ -7,10 +7,10 @@ def test_issue_entry_includes_pdf_cover_links():
     entry = issue_entry(
         {
             "id": 12,
-            "magazine_title": "Linux Format",
+            "magazine_title": "Magazine Title Three",
             "issue_key": "2026-05-01",
-            "release_title": "Linux Format May 2026",
-            "file_path": "/library/Linux Format/Linux Format - 2026-05-01.pdf",
+            "release_title": "Magazine Title Three May 2026",
+            "file_path": "/library/Magazine Title Three/Magazine Title Three - 2026-05-01.pdf",
         }
     )
 

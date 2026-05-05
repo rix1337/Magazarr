@@ -13,7 +13,7 @@ def test_parse_quasarr_search_results():
     <rss>
       <channel>
         <item>
-          <title>Linux Format May 2026</title>
+          <title>Magazine Title Three May 2026</title>
           <link>http://quasarr/download/?payload=abc</link>
           <comments>source</comments>
           <pubDate>Tue, 05 May 2026 10:00:00 +0000</pubDate>
@@ -24,7 +24,7 @@ def test_parse_quasarr_search_results():
     """
     results = parse_search_results(xml)
     assert len(results) == 1
-    assert results[0].title == "Linux Format May 2026"
+    assert results[0].title == "Magazine Title Three May 2026"
     assert results[0].size_bytes == 1234
 
 
@@ -45,9 +45,9 @@ def test_search_fetches_all_pages():
             self.offsets.append(params["offset"])
             offset = params["offset"]
             titles = {
-                0: ["Linux Format May 2026", "Linux Format April 2026"],
-                2: ["Linux Format March 2026", "Linux Format February 2026"],
-                4: ["Linux Format January 2026"],
+                0: ["Magazine Title Three May 2026", "Magazine Title Three April 2026"],
+                2: ["Magazine Title Three March 2026", "Magazine Title Three February 2026"],
+                4: ["Magazine Title Three January 2026"],
             }[offset]
             return Response(_xml(titles))
 
@@ -55,15 +55,15 @@ def test_search_fetches_all_pages():
     session = Session()
     client.session = session
 
-    results = client.search("Linux Format", "7000", page_limit=2)
+    results = client.search("Magazine Title Three", "7000", page_limit=2)
 
     assert session.offsets == [0, 2, 4]
     assert [item.title for item in results] == [
-        "Linux Format May 2026",
-        "Linux Format April 2026",
-        "Linux Format March 2026",
-        "Linux Format February 2026",
-        "Linux Format January 2026",
+        "Magazine Title Three May 2026",
+        "Magazine Title Three April 2026",
+        "Magazine Title Three March 2026",
+        "Magazine Title Three February 2026",
+        "Magazine Title Three January 2026",
     ]
 
 

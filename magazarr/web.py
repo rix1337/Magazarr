@@ -537,9 +537,7 @@ def _int(value, default):
 
 def download_status_payload(db, settings, magazine_id: int | None = None):
     downloads = list(db.downloads(magazine_id))
-    by_package = {
-        str(item["package_id"]): item for item in downloads if item["package_id"]
-    }
+    by_package, by_title = _download_match_indexes(downloads)
     try:
         queue, history = fetch_quasarr_downloads(settings)
         sync_download_errors(db, settings, downloads, queue, history)
@@ -547,8 +545,8 @@ def download_status_payload(db, settings, magazine_id: int | None = None):
         return {"active": [], "error": str(exc), "quasarr_url": quasarr_public_url(settings)}
 
     active = []
-    for item in queue:
-        download = by_package.get(str(item.get("nzo_id")))
+    for item in [*queue, *history]:
+        download = _download_for_quasarr_item(item, by_package, by_title)
         if not download:
             continue
         active.append(download_card_payload(settings, item, download))
@@ -556,9 +554,32 @@ def download_status_payload(db, settings, magazine_id: int | None = None):
     return {"active": active, "error": "", "quasarr_url": quasarr_public_url(settings)}
 
 
+def _download_match_indexes(downloads):
+    by_package = {
+        str(item["package_id"]): item for item in downloads if item["package_id"]
+    }
+    by_title = {}
+    for item in downloads:
+        key = _download_title_key(item["release_title"])
+        if key and key not in by_title:
+            by_title[key] = item
+    return by_package, by_title
+
+
+def _download_for_quasarr_item(item, by_package, by_title):
+    download = by_package.get(str(item.get("nzo_id")))
+    if download:
+        return download
+    return by_title.get(_download_title_key(item.get("name") or item.get("filename")))
+
+
+def _download_title_key(value) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+
 def download_card_payload(settings, item, download):
     package_id = str(item.get("nzo_id") or "")
-    title = str(item.get("filename") or download["release_title"])
+    title = str(item.get("filename") or item.get("name") or download["release_title"])
     for prefix in ("[Downloading] ", "[Extracting] ", "[Paused] ", "[Linkgrabber] ", "[CAPTCHA not solved!] "):
         title = title.replace(prefix, "")
     return {
