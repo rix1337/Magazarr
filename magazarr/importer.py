@@ -9,14 +9,10 @@ from loguru import logger
 from magazarr.notifications import notify_error, notify_import_success
 from magazarr.quasarr_client import QuasarrClient
 from magazarr.settings import Settings
-from magazarr.utils import is_relative_to, safe_filename
+from magazarr.utils import safe_filename
 
 
 def import_completed(db, settings: Settings) -> list[str]:
-    if not settings.import_root:
-        _import_error(db, settings, "Import root missing; not importing")
-        return []
-
     client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
     history = client.history()
     history_by_id = {str(item.get("nzo_id")): item for item in history if item.get("nzo_id")}
@@ -51,19 +47,18 @@ def import_completed(db, settings: Settings) -> list[str]:
 
 
 def _import_one(db, settings: Settings, download, storage: str) -> bool:
+    storage = str(storage or "").strip()
+    if not storage:
+        _import_error(db, settings, "Storage path missing from Quasarr history", download)
+        return False
+
     source = Path(storage).expanduser()
-    import_root = Path(settings.import_root).expanduser()
 
     if not source.exists():
         _import_error(db, settings, f"Storage path not found: {source}", download)
         return False
-    if not is_relative_to(source, import_root):
-        _import_error(
-            db,
-            settings,
-            f"Storage outside import root; not deleting/importing: {source}",
-            download,
-        )
+    if source.is_dir() and _is_filesystem_root(source):
+        _import_error(db, settings, f"Refusing to import from filesystem root: {source}", download)
         return False
 
     pdf = _source_pdf(source)
@@ -86,7 +81,7 @@ def _import_one(db, settings: Settings, download, storage: str) -> bool:
         download["package_id"],
     )
     cleanup_dir = source if source.is_dir() else None
-    if cleanup_dir and cleanup_dir.resolve() != import_root.resolve():
+    if cleanup_dir and not _is_filesystem_root(cleanup_dir):
         shutil.rmtree(cleanup_dir)
     logger.info(f"Imported {dest}")
     notify_import_success(
@@ -97,6 +92,11 @@ def _import_one(db, settings: Settings, download, storage: str) -> bool:
         dest,
     )
     return True
+
+
+def _is_filesystem_root(path: Path) -> bool:
+    resolved = path.resolve()
+    return resolved == Path(resolved.anchor)
 
 
 def _library_destination(settings: Settings, download, pdf: Path) -> Path:
