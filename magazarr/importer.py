@@ -41,6 +41,7 @@ def import_completed(db, settings: Settings) -> list[str]:
         storage = str(item.get("storage") or "").strip()
         db.update_download_storage(download["id"], storage, "completed")
         if _import_one(db, settings, download, storage):
+            _delete_imported_package(db, client, download, item)
             imported.append(download["release_title"])
         else:
             db.update_download_storage(download["id"], storage, "import_error")
@@ -69,6 +70,33 @@ def _history_name_key(value) -> str:
 
 def _history_status(item: dict) -> str:
     return str(item.get("status") or "").strip().lower()
+
+
+def _delete_imported_package(db, client: QuasarrClient, download, item: dict):
+    package_id = str(item.get("nzo_id") or download["package_id"] or "").strip()
+    if not package_id:
+        return
+    title = download["release_title"]
+    try:
+        if client.delete_package(package_id, title):
+            return
+    except Exception as exc:
+        message = f"Imported package cleanup failed: {exc}"
+    else:
+        fallback_id = str(download["package_id"] or "").strip()
+        if fallback_id and fallback_id != package_id:
+            try:
+                if client.delete_package(fallback_id, title):
+                    return
+            except Exception as exc:
+                message = f"Imported package cleanup failed: {exc}"
+            else:
+                message = f"Imported package cleanup failed: {title}"
+        else:
+            message = f"Imported package cleanup failed: {title}"
+    logger.warning(message)
+    if hasattr(db, "record_event"):
+        db.record_event("warning", "import", message, title)
 
 
 def _import_one(db, settings: Settings, download, storage: str) -> bool:
