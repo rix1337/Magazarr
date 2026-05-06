@@ -26,7 +26,7 @@ class Settings:
     library_dir: str = field(default_factory=default_library_dir)
     import_root: str = ""
     automation_interval_minutes: int = 60
-    import_check_interval_minutes: int = 5
+    import_check_interval_minutes: int = 1
     opds_auth_enabled: bool = False
     opds_username: str = ""
     opds_password: str = ""
@@ -81,7 +81,7 @@ class SettingsStore:
             form.get("automation_interval_minutes"), 60
         )
         settings.import_check_interval_minutes = _int(
-            form.get("import_check_interval_minutes"), 5
+            form.get("import_check_interval_minutes"), 1
         )
         settings.opds_auth_enabled = form.get("opds_auth_enabled") == "on"
         settings.opds_username = str(form.get("opds_username", "")).strip()

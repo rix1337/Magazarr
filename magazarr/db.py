@@ -267,10 +267,44 @@ class Database:
                 SELECT 1 FROM issues WHERE magazine_id=? AND issue_key=?
                 UNION
                 SELECT 1 FROM downloads
-                WHERE magazine_id=? AND issue_key=? AND status IN ('snatched', 'imported')
+                WHERE magazine_id=? AND issue_key=?
+                  AND status IN ('snatched', 'completed', 'import_error', 'imported')
                 LIMIT 1
                 """,
                 (magazine_id, issue_key, magazine_id, issue_key),
+            ).fetchone()
+            return row is not None
+
+    def has_active_release_download(
+        self,
+        magazine_id: int,
+        issue_key: str,
+        release_title: str,
+        download_url: str,
+    ) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM issues WHERE magazine_id=? AND issue_key=?
+                UNION
+                SELECT 1 FROM downloads
+                WHERE magazine_id=?
+                  AND status IN ('snatched', 'completed', 'import_error', 'imported')
+                  AND (
+                    issue_key=?
+                    OR release_title=? COLLATE NOCASE
+                    OR download_url=?
+                  )
+                LIMIT 1
+                """,
+                (
+                    magazine_id,
+                    issue_key,
+                    magazine_id,
+                    issue_key,
+                    release_title,
+                    download_url,
+                ),
             ).fetchone()
             return row is not None
 
@@ -284,7 +318,8 @@ class Database:
                 UNION ALL
                 SELECT issue_key, release_title, '' AS pub_date
                 FROM downloads
-                WHERE magazine_id=? AND status IN ('snatched', 'completed', 'imported')
+                WHERE magazine_id=?
+                  AND status IN ('snatched', 'completed', 'import_error', 'imported')
                 """,
                 (magazine_id, magazine_id),
             ).fetchall()
@@ -615,6 +650,24 @@ class Database:
             else:
                 conn.execute(
                     "DELETE FROM skipped_releases WHERE status='skipped' AND magazine_id=?",
+                    (magazine_id,),
+                )
+
+    def delete_import_errors(self, magazine_id: int | None = None):
+        with self.connect() as conn:
+            if magazine_id is None:
+                conn.execute(
+                    """
+                    DELETE FROM downloads
+                    WHERE status IN ('import_error', 'download_error')
+                    """
+                )
+            else:
+                conn.execute(
+                    """
+                    DELETE FROM downloads
+                    WHERE magazine_id=? AND status IN ('import_error', 'download_error')
+                    """,
                     (magazine_id,),
                 )
 

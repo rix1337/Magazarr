@@ -6,7 +6,7 @@ Magazarr is a small magazine-only companion for Quasarr.
 
 It keeps a free-text magazine list, searches Quasarr for recent issues, sends chosen releases back to Quasarr for download, imports the largest PDF from completed JDownloader folders, and exposes the library through OPDS.
 
-Magazarr automatically searches active titles every 60 minutes by default and checks completed downloads for import every 5 minutes by default. Set either interval to `0` to disable that background task.
+Magazarr automatically searches active titles every 60 minutes by default and checks completed downloads for import every minute by default. Set either interval to `0` to disable that background task.
 
 ## Run
 

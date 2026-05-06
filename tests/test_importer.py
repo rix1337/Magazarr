@@ -236,15 +236,15 @@ def test_library_destination_uses_release_date_for_numbered_issue_key(tmp_path):
     settings = Settings(library_dir=str(tmp_path / "library"))
     download = {
         "magazine_id": 3,
-        "magazine_title": "PC Gamer",
+        "magazine_title": "Fictional Games Monthly",
         "issue_key": "2026-issue-0421",
-        "release_title": "PC Gamer UK - Issue 421, 2026 05",
+        "release_title": "Fictional Games Monthly UK - Issue 421, 2026 05",
     }
 
     dest = _library_destination(
         settings,
         download,
-        tmp_path / "PC.Gamer.UK..Issue.421.May.2026.PDF",
+        tmp_path / "Fictional.Games.Monthly.UK..Issue.421.May.2026.PDF",
     )
 
     assert dest == (
@@ -254,8 +254,8 @@ def test_library_destination_uses_release_date_for_numbered_issue_key(tmp_path):
         / "3"
         / "2026"
         / "05"
-        / "PC Gamer"
-        / "2026-issue-0421 - PC.Gamer.UK..Issue.421.May.2026.pdf"
+        / "Fictional Games Monthly"
+        / "2026-issue-0421 - Fictional.Games.Monthly.UK..Issue.421.May.2026.pdf"
     )
 
 

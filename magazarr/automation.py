@@ -205,6 +205,8 @@ class AutomationService:
         return imported
 
     def _run_import_check_locked(self, settings):
+        if not _has_pending_import_downloads(self.db):
+            return []
         sync_download_errors(self.db, settings)
         return import_completed(self.db, settings)
 
@@ -297,3 +299,7 @@ def _json_safe(value):
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _has_pending_import_downloads(db) -> bool:
+    return any(row["status"] in {"snatched", "completed"} for row in db.downloads())

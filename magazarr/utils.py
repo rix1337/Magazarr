@@ -187,6 +187,7 @@ def issue_aliases(
             aliases.update(_number_date_aliases(number, numbering_modes))
         aliases.add(f"issue-{number.number:04d}")
 
+    aliases.update(_month_year_aliases(title, numbering_modes))
     parsed_pub = parse_rfc822(pub_date)
     if parsed_pub:
         aliases.add(f"pubdate:{parsed_pub.date().isoformat()}")
@@ -312,3 +313,30 @@ def _number_date_aliases(
     if mode == "monthly" and 1 <= number.number <= 12:
         return {f"{number.year}-{number.number:02d}-01"}
     return set()
+
+
+def _month_year_aliases(
+    title: str,
+    numbering_modes: dict[int, str] | None,
+) -> set[str]:
+    words = tokens(title)
+    aliases = set()
+    for idx, word in enumerate(words):
+        month = MONTHS.get(word)
+        year = _nearby_year(words, idx) if month else None
+        if year and month:
+            value = date(year, month, 1)
+            aliases.add(value.isoformat())
+            aliases.add(f"date:{value.isoformat()}")
+            aliases.update(_date_number_aliases(value, numbering_modes))
+            continue
+        if re.fullmatch(r"20\d{2}", word):
+            for pos in (idx + 1, idx - 1):
+                if 0 <= pos < len(words) and words[pos].isdigit():
+                    month = int(words[pos])
+                    if 1 <= month <= 12:
+                        value = date(int(word), month, 1)
+                        aliases.add(value.isoformat())
+                        aliases.add(f"date:{value.isoformat()}")
+                        aliases.update(_date_number_aliases(value, numbering_modes))
+    return aliases

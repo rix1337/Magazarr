@@ -98,6 +98,19 @@ def create_app(settings_store: SettingsStore, db, automation=None):
         db.clear_skipped_releases(magazine_id)
         redirect("/")
 
+    @app.post("/magazines/<magazine_id:int>/errors/delete")
+    def delete_magazine_errors(magazine_id):
+        if not db.magazine_by_id(magazine_id):
+            raise HTTPError(404, "Magazine not found")
+        db.delete_import_errors(magazine_id)
+        db.record_event(
+            "info",
+            "download",
+            "Deleted error downloads",
+            f"magazine_id={magazine_id}",
+        )
+        redirect("/")
+
     @app.get("/api/magazines/<magazine_id:int>/items/<kind>")
     def magazine_items_api(magazine_id, kind):
         if not db.magazine_by_id(magazine_id):
@@ -118,16 +131,13 @@ def create_app(settings_store: SettingsStore, db, automation=None):
             ]
             total = db.issue_count(search, magazine_id=magazine_id)
         elif kind == "skipped":
-            rows = [
-                skipped_payload(row)
-                for row in db.skipped_releases(
-                    limit=limit,
-                    offset=offset,
-                    search=search,
-                    magazine_id=magazine_id,
-                )
-            ]
-            total = db.skipped_release_count(search, magazine_id=magazine_id)
+            rows, total = skipped_and_error_rows(
+                db,
+                magazine_id=magazine_id,
+                limit=limit,
+                offset=offset,
+                search=search,
+            )
         elif kind == "errors":
             rows = [
                 download_payload(row)
@@ -164,7 +174,30 @@ def create_app(settings_store: SettingsStore, db, automation=None):
     @app.post("/downloads/<download_id:int>/delete-package")
     def delete_download_package(download_id):
         settings = settings_store.load()
-        _delete_download_package(db, settings, download_id)
+        _delete_download_package(db, settings, download_id, "Deleted manually")
+        redirect("/")
+
+    @app.post("/downloads/<download_id:int>/skip")
+    def skip_download_package(download_id):
+        settings = settings_store.load()
+        _delete_download_package(db, settings, download_id, "Skipped manually")
+        redirect("/")
+
+    @app.post("/downloads/<download_id:int>/import-now")
+    def import_download_now(download_id):
+        if not _download_by_id(db, download_id):
+            raise HTTPError(404, "Download not found")
+        settings = settings_store.load()
+        try:
+            if automation:
+                automation.import_completed()
+            else:
+                import_completed(db, settings)
+        except Exception as exc:
+            logger.exception(exc)
+            if hasattr(db, "record_event"):
+                db.record_event("error", "import", str(exc))
+            raise HTTPError(500, str(exc)) from exc
         redirect("/")
 
     @app.get("/issues/<issue_id:int>/view")
@@ -293,11 +326,6 @@ def dashboard(settings, db) -> str:
             </form>
           </div>
         </div>
-        <section class="job-panel" id="job-panel" hidden>
-          <h3 id="job-title">Search</h3>
-          <div class="job-status" id="job-status">Queued</div>
-          <div class="job-results" id="job-results"></div>
-        </section>
         <div class="mag-list">
           {magazine_rows(magazines, blacklist, db, downloading_counts)}
         </div>
@@ -307,6 +335,8 @@ def dashboard(settings, db) -> str:
     {downloads_modal()}
     {settings_modal(settings)}
     {magazine_modal()}
+    {job_modal()}
+    {confirm_modal()}
     """
 
 
@@ -321,21 +351,26 @@ def magazine_rows(magazines, blacklist, db, downloading_counts=None) -> str:
     rows = []
     downloading_counts = downloading_counts or {}
     for mag in magazines:
-        checked = "checked" if mag["active"] else ""
         blacklisted_terms = blacklist.get(mag["id"], [])
         skipped = db.skipped_release_count(magazine_id=mag["id"])
         errors = db.import_error_count(mag["id"])
+        skipped_and_errors = skipped + errors
         downloading = downloading_counts.get(mag["id"], 0)
         rows.append(
             f"""
             <article class="mag-card">
-              <div class="mag-cover">{magazine_cover(mag)}</div>
+              <div class="mag-cover-block">
+                <button class="cover-button" type="button" data-open-mag-items
+                  data-kind="downloaded" data-magazine-id="{mag['id']}"
+                  data-title="Downloaded" data-magazine-title="{html.escape(mag['title'])}"
+                  aria-label="Downloaded {mag['issue_count']}">
+                  <span class="mag-cover">{magazine_cover(mag)}</span>
+                  <span class="downloaded-entry"><span class="downloaded-label">Downloaded</span><strong>{mag['issue_count']}</strong></span>
+                </button>
+              </div>
               <div class="mag-main">
                 <div class="mag-title">
                   <h3>{html.escape(mag["title"])}</h3>
-                  <form method="post" action="/magazines/{mag['id']}/active">
-                    <label class="switch"><input type="checkbox" name="active" {checked} onchange="this.form.submit()"> Active</label>
-                  </form>
                 </div>
                 <div class="chips">{blacklist_chips(blacklisted_terms)}</div>
                 <form class="chip-form" method="post" action="/magazines/{mag['id']}/blacklist">
@@ -343,14 +378,15 @@ def magazine_rows(magazines, blacklist, db, downloading_counts=None) -> str:
                   <button type="submit">Add</button>
                 </form>
                 <div class="mag-stats">
-                  {mag_stat_button("Downloaded", mag["issue_count"], mag["id"], "downloaded", mag["title"])}
                   {mag_stat_button("Downloading", downloading, mag["id"], "downloading", mag["title"])}
-                  {mag_stat_button("Skipped", skipped, mag["id"], "skipped", mag["title"])}
-                  {mag_stat_button("Errors", errors, mag["id"], "errors", mag["title"])}
+                  {mag_stat_button("Skipped / Errors", skipped_and_errors, mag["id"], "skipped", mag["title"])}
                 </div>
                 <div class="card-actions">
                   <form class="js-job-form" method="post" action="/api/magazines/{mag['id']}/search"><button>Search</button></form>
-                  <form method="post" action="/magazines/{mag['id']}/delete"><button class="secondary">Delete</button></form>
+                  <form method="post" action="/magazines/{mag['id']}/active">
+                    <button class="secondary active-toggle {'is-active' if mag['active'] else 'is-inactive'}" type="submit" name="active" value="{'' if mag['active'] else 'on'}">{'Disable' if mag['active'] else 'Enable'}</button>
+                  </form>
+                  <form method="post" action="/magazines/{mag['id']}/delete" data-confirm="Delete this magazine and all local records?"><button class="secondary">Delete</button></form>
                 </div>
               </div>
             </article>
@@ -361,6 +397,8 @@ def magazine_rows(magazines, blacklist, db, downloading_counts=None) -> str:
 
 def active_download_counts(db, settings) -> dict[int, int]:
     downloads = list(db.downloads())
+    if not _has_pending_downloads(downloads):
+        return {}
     by_package, by_title = _download_match_indexes(downloads)
     counts: dict[int, int] = {}
     try:
@@ -485,7 +523,10 @@ def magazine_modal() -> str:
         <input id="magazine-modal-search" placeholder="Search">
         <span id="magazine-modal-count"></span>
         <form id="magazine-modal-clear" method="post" hidden>
-          <button type="submit" class="secondary">Clear</button>
+          <button type="submit" class="secondary">Clear Skipped</button>
+        </form>
+        <form id="magazine-modal-delete-errors" method="post" hidden data-confirm="Delete all error downloads for this magazine?">
+          <button type="submit" class="secondary">Delete Errors</button>
         </form>
       </div>
       <div id="magazine-modal-body" class="modal-list"></div>
@@ -493,6 +534,19 @@ def magazine_modal() -> str:
         <button type="button" class="secondary" id="magazine-modal-prev">Prev</button>
         <span id="magazine-modal-page"></span>
         <button type="button" class="secondary" id="magazine-modal-next">Next</button>
+      </div>
+    </dialog>
+    """
+
+
+def confirm_modal() -> str:
+    return """
+    <dialog id="confirm-modal" class="confirm-dialog">
+      <div class="confirm-head"><h2>Are you sure?</h2></div>
+      <p id="confirm-message" class="muted">This cannot be undone.</p>
+      <div class="confirm-actions">
+        <form method="dialog"><button type="submit" class="secondary">Cancel</button></form>
+        <button type="button" id="confirm-accept">Delete</button>
       </div>
     </dialog>
     """
@@ -508,6 +562,21 @@ def downloads_modal() -> str:
       <div id="download-status" class="download-list">
         <div class="muted">Loading...</div>
       </div>
+    </dialog>
+    """
+
+
+def job_modal() -> str:
+    return """
+    <dialog id="job-modal">
+      <form method="dialog" class="modal-head">
+        <h2 id="job-title">Search</h2>
+        <button type="submit" class="secondary">Close</button>
+      </form>
+      <section class="job-panel" id="job-panel" hidden>
+        <div class="job-status" id="job-status">Queued</div>
+        <div class="job-results" id="job-results"></div>
+      </section>
     </dialog>
     """
 
@@ -536,6 +605,7 @@ def issue_payload(row):
         "issue_key": row["issue_key"],
         "release_title": row["release_title"],
         "file_path": row["file_path"],
+        "cover_url": f"/opds?cmd=Cover&issueid={row['id']}",
         "view_url": f"/issues/{row['id']}/view",
         "file_url": f"/issues/{row['id']}/file",
         "acquired_at": row["acquired_at"],
@@ -545,6 +615,7 @@ def issue_payload(row):
 
 def skipped_payload(row):
     return {
+        "item_kind": "skipped",
         "id": row["id"],
         "magazine_title": row["magazine_title"],
         "release_title": row["release_title"],
@@ -555,6 +626,7 @@ def skipped_payload(row):
 
 def download_payload(row):
     return {
+        "item_kind": "error",
         "id": row["id"],
         "magazine_title": row["magazine_title"],
         "release_title": row["release_title"],
@@ -563,6 +635,42 @@ def download_payload(row):
         "package_id": row["package_id"],
         "updated_at": row["updated_at"],
     }
+
+
+def skipped_and_error_rows(
+    db,
+    magazine_id: int,
+    limit: int,
+    offset: int,
+    search: str = "",
+) -> tuple[list[dict], int]:
+    error_total = db.import_error_count(magazine_id, search)
+    skipped_total = db.skipped_release_count(search, magazine_id=magazine_id)
+    rows = []
+    if offset < error_total:
+        error_limit = min(limit, error_total - offset)
+        rows.extend(
+            download_payload(row)
+            for row in db.import_errors(
+                limit=error_limit,
+                offset=offset,
+                magazine_id=magazine_id,
+                search=search,
+            )
+        )
+    skipped_limit = limit - len(rows)
+    if skipped_limit > 0:
+        skipped_offset = max(0, offset - error_total)
+        rows.extend(
+            skipped_payload(row)
+            for row in db.skipped_releases(
+                limit=skipped_limit,
+                offset=skipped_offset,
+                search=search,
+                magazine_id=magazine_id,
+            )
+        )
+    return rows, error_total + skipped_total
 
 
 def _int(value, default):
@@ -574,6 +682,8 @@ def _int(value, default):
 
 def download_status_payload(db, settings, magazine_id: int | None = None):
     downloads = list(db.downloads(magazine_id))
+    if not _has_pending_downloads(downloads):
+        return {"active": [], "error": "", "quasarr_url": quasarr_public_url(settings)}
     by_package, by_title = _download_match_indexes(downloads)
     try:
         queue, history = fetch_quasarr_downloads(settings)
@@ -598,6 +708,17 @@ def _download_still_in_quasarr(queue, history, by_package, by_title) -> bool:
     return False
 
 
+def _has_pending_downloads(downloads) -> bool:
+    return any(row["status"] in {"snatched", "completed"} for row in downloads)
+
+
+def _download_by_id(db, download_id: int):
+    return next(
+        (item for item in db.downloads() if int(item["id"]) == int(download_id)),
+        None,
+    )
+
+
 def _download_match_indexes(downloads):
     by_package = {
         str(item["package_id"]): item for item in downloads if item["package_id"]
@@ -617,11 +738,13 @@ def _download_for_quasarr_item(item, by_package, by_title):
     return by_title.get(_download_title_key(item.get("name") or item.get("filename")))
 
 
-def _delete_download_package(db, settings, download_id: int):
-    download = next(
-        (item for item in db.downloads() if int(item["id"]) == int(download_id)),
-        None,
-    )
+def _delete_download_package(
+    db,
+    settings,
+    download_id: int,
+    skipped_reason: str = "Deleted manually",
+):
+    download = _download_by_id(db, download_id)
     if not download or not download["package_id"]:
         raise HTTPError(404, "Download package not found")
     client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
@@ -632,11 +755,15 @@ def _delete_download_package(db, settings, download_id: int):
             raise HTTPError(500, "Quasarr package delete failed")
     db.update_download_status(download_id, "deleted")
     if hasattr(db, "record_skipped_download"):
-        db.record_skipped_download(download, "Deleted manually")
+        db.record_skipped_download(download, skipped_reason)
     db.record_event(
         "info",
         "download",
-        "Deleted download package",
+        (
+            "Deleted download package"
+            if skipped_reason == "Deleted manually"
+            else "Skipped download package"
+        ),
         download["release_title"],
     )
 
@@ -685,13 +812,38 @@ def page_script() -> str:
   }[char]));
 
   const jobPanel = document.getElementById("job-panel");
+  const jobModal = document.getElementById("job-modal");
   const jobTitle = document.getElementById("job-title");
   const jobStatus = document.getElementById("job-status");
   const jobResults = document.getElementById("job-results");
+  const confirmModal = document.getElementById("confirm-modal");
+  const confirmMessage = document.getElementById("confirm-message");
+  const confirmAccept = document.getElementById("confirm-accept");
+  let pendingConfirmForm = null;
+
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || !form.dataset.confirm) return;
+    if (form.dataset.confirmed === "true") {
+      delete form.dataset.confirmed;
+      return;
+    }
+    event.preventDefault();
+    pendingConfirmForm = form;
+    if (confirmMessage) confirmMessage.textContent = form.dataset.confirm || "This cannot be undone.";
+    confirmModal?.showModal();
+  });
+
+  confirmAccept?.addEventListener("click", () => {
+    if (!pendingConfirmForm) return;
+    pendingConfirmForm.dataset.confirmed = "true";
+    pendingConfirmForm.requestSubmit();
+  });
 
   async function startJob(form) {
     const button = form.querySelector("button");
     if (button) button.disabled = true;
+    jobModal?.showModal();
     jobPanel.hidden = false;
     jobTitle.textContent = "Search";
     jobStatus.textContent = "Starting...";
@@ -742,7 +894,7 @@ def page_script() -> str:
     });
   }
 
-  const limit = 25;
+  const baseLimit = 25;
   const settingsModal = document.getElementById("settings-modal");
   const downloadsModal = document.getElementById("downloads-modal");
   const magazineModal = document.getElementById("magazine-modal");
@@ -754,6 +906,7 @@ def page_script() -> str:
   const magazineModalPrev = document.getElementById("magazine-modal-prev");
   const magazineModalNext = document.getElementById("magazine-modal-next");
   const magazineModalClear = document.getElementById("magazine-modal-clear");
+  const magazineModalDeleteErrors = document.getElementById("magazine-modal-delete-errors");
   let activeMagazine = { id: 0, kind: "", label: "", title: "", offset: 0 };
 
   document.querySelector("[data-open-settings]")?.addEventListener("click", () => {
@@ -775,6 +928,9 @@ def page_script() -> str:
     const quasarr = quasarrUrl
       ? `<a class="button-link secondary" href="${esc(quasarrUrl)}" target="_blank" rel="noreferrer">Quasarr</a>`
       : "";
+    const importNow = String(item.status || "").trim().toLowerCase() === "completed"
+      ? `<form method="post" action="/downloads/${item.id}/import-now"><button>Import Now</button></form>`
+      : "";
     card.innerHTML = `
       <div class="download-title">${esc(item.title || item.release_title)}</div>
       <div class="download-meta">
@@ -785,10 +941,14 @@ def page_script() -> str:
       </div>
       <div class="progress"><span style="width:${pct}%"></span></div>
       <div class="download-actions">
+        ${importNow}
         ${captcha}
         ${quasarr}
-        <form method="post" action="/downloads/${item.id}/delete-package">
-          <button>Delete</button>
+        <form method="post" action="/downloads/${item.id}/skip">
+          <button>Skip</button>
+        </form>
+        <form method="post" action="/downloads/${item.id}/delete-package" data-confirm="Delete this download?">
+          <button class="secondary">Delete</button>
         </form>
       </div>`;
     return card;
@@ -821,14 +981,28 @@ def page_script() -> str:
     const card = document.createElement("article");
     card.className = "list-card";
     if (kind === "downloaded") {
+      card.className = "list-card carousel-card";
       card.innerHTML = `
-        <div class="list-title">${esc(item.issue_key || item.release_title)}</div>
-        <div class="muted">${esc(item.release_title)}</div>
-        <div class="file-path">${esc(item.file_path)}</div>
+        <div class="carousel-cover"><img src="${esc(item.cover_url)}" alt=""></div>
+        <div class="carousel-detail">
+          <div class="list-title">${esc(item.issue_key || item.release_title)}</div>
+          <div class="muted">${esc(item.release_title)}</div>
+          <div class="file-path">${esc(item.file_path)}</div>
+          <div class="download-actions">
+            <a class="button-link" href="${esc(item.view_url)}" target="_blank" rel="noreferrer">View</a>
+            <a class="button-link secondary" href="${esc(item.file_url)}" target="_blank" rel="noreferrer">PDF</a>
+            <form method="post" action="/issues/${item.id}/delete" data-confirm="Delete this imported PDF?"><button>Delete</button></form>
+          </div>
+        </div>`;
+      return card;
+    }
+    if (kind === "skipped" && item.item_kind === "error") {
+      card.innerHTML = `
+        <div class="list-title">${esc(item.release_title)}</div>
+        <div class="download-meta"><span>${esc(item.status)}</span><span>${esc(item.updated_at)}</span></div>
         <div class="download-actions">
-          <a class="button-link" href="${esc(item.view_url)}" target="_blank" rel="noreferrer">View</a>
-          <a class="button-link secondary" href="${esc(item.file_url)}" target="_blank" rel="noreferrer">PDF</a>
-          <form method="post" action="/issues/${item.id}/delete"><button>Delete</button></form>
+          <form method="post" action="/downloads/${item.id}/retry-import"><button>Retry</button></form>
+          <form method="post" action="/downloads/${item.id}/delete-package" data-confirm="Delete this error download?"><button class="secondary">Delete</button></form>
         </div>`;
       return card;
     }
@@ -847,7 +1021,7 @@ def page_script() -> str:
         <div class="download-meta"><span>${esc(item.status)}</span><span>${esc(item.updated_at)}</span></div>
         <div class="download-actions">
           <form method="post" action="/downloads/${item.id}/retry-import"><button>Retry</button></form>
-          <form method="post" action="/downloads/${item.id}/delete-package"><button class="secondary">Delete</button></form>
+          <form method="post" action="/downloads/${item.id}/delete-package" data-confirm="Delete this error download?"><button class="secondary">Delete</button></form>
         </div>`;
       return card;
     }
@@ -856,6 +1030,7 @@ def page_script() -> str:
 
   async function loadMagazineItems(nextOffset = 0) {
     activeMagazine.offset = Math.max(0, nextOffset);
+    const limit = activeMagazine.kind === "downloaded" ? 1 : baseLimit;
     const params = new URLSearchParams({
       limit,
       offset: activeMagazine.offset,
@@ -893,14 +1068,24 @@ def page_script() -> str:
         magazineModalClear.hidden = activeMagazine.kind !== "skipped";
         magazineModalClear.action = `/magazines/${activeMagazine.id}/skipped/clear`;
       }
+      if (magazineModalDeleteErrors) {
+        magazineModalDeleteErrors.hidden = activeMagazine.kind !== "skipped";
+        magazineModalDeleteErrors.action = `/magazines/${activeMagazine.id}/errors/delete`;
+      }
       magazineModal?.showModal();
       loadMagazineItems(0);
     });
   }
 
   magazineModalSearch?.addEventListener("input", () => loadMagazineItems(0));
-  magazineModalPrev?.addEventListener("click", () => loadMagazineItems(activeMagazine.offset - limit));
-  magazineModalNext?.addEventListener("click", () => loadMagazineItems(activeMagazine.offset + limit));
+  magazineModalPrev?.addEventListener("click", () => {
+    const limit = activeMagazine.kind === "downloaded" ? 1 : baseLimit;
+    loadMagazineItems(activeMagazine.offset - limit);
+  });
+  magazineModalNext?.addEventListener("click", () => {
+    const limit = activeMagazine.kind === "downloaded" ? 1 : baseLimit;
+    loadMagazineItems(activeMagazine.offset + limit);
+  });
   loadDownloads();
   setInterval(() => {
     loadDownloads();
@@ -1129,6 +1314,11 @@ def page(title: str, body: str) -> str:
       min-height: 28px;
       margin-top: 10px;
     }}
+    .chips:empty {{
+      display: none;
+      min-height: 0;
+      margin-top: 0;
+    }}
     .chip {{
       display: inline-flex;
       align-items: center;
@@ -1182,15 +1372,70 @@ def page(title: str, body: str) -> str:
       color: var(--fg);
       padding: 16px;
     }}
+    .confirm-dialog {{
+      width: min(460px, calc(100vw - 32px));
+    }}
+    .confirm-head {{
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .confirm-head h2 {{
+      margin: 0;
+      font-size: 18px;
+    }}
+    .confirm-dialog p {{
+      margin: 14px 0;
+      font-size: 15px;
+      line-height: 1.35;
+    }}
+    .confirm-actions {{
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }}
+    .confirm-actions form {{
+      margin: 0;
+    }}
+    .confirm-actions button {{
+      min-width: 92px;
+    }}
     dialog::backdrop {{ background: rgba(0, 0, 0, 0.4); }}
-    .modal-head, .modal-tools, .pager {{
+    .modal-head, .pager {{
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
       margin-bottom: 12px;
     }}
-    .modal-tools input {{ max-width: 360px; }}
+    .modal-head {{
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .modal-tools {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 8px;
+      margin-bottom: 12px;
+    }}
+    .modal-tools input {{
+      flex: 1 1 220px;
+      max-width: 360px;
+    }}
+    .modal-tools form {{
+      margin: 0;
+    }}
+    .modal-tools button {{
+      min-height: 34px;
+      padding: 7px 11px;
+    }}
+    #magazine-modal-count {{
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }}
     .pager {{ justify-content: flex-end; margin-top: 12px; }}
     .download-list {{
       display: grid;
@@ -1296,8 +1541,8 @@ def page(title: str, body: str) -> str:
       gap: 8px;
     }}
     .card-actions {{
-      margin-top: 14px;
-      padding-top: 12px;
+      margin-top: 10px;
+      padding-top: 10px;
       border-top: 1px solid var(--line);
     }}
     .card-actions form {{
@@ -1338,14 +1583,68 @@ def page(title: str, body: str) -> str:
       min-width: 0;
       align-items: start;
     }}
-    .mag-cover {{
+    .mag-cover-block {{
       width: 116px;
-      aspect-ratio: 210 / 297;
+      min-width: 0;
+    }}
+    .cover-button {{
+      display: grid;
+      grid-template-rows: auto 34px;
+      width: 100%;
+      min-height: 0;
+      padding: 0;
       border: 1px solid var(--line);
-      border-radius: 6px;
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--panel);
+      color: var(--fg);
+      box-shadow: 0 10px 22px rgba(23, 32, 38, 0.08);
+      text-align: left;
+      transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+    }}
+    .cover-button:hover {{
+      border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+      box-shadow: 0 14px 28px rgba(23, 32, 38, 0.12);
+      transform: translateY(-1px);
+    }}
+    .cover-button:focus-visible {{
+      outline: 3px solid color-mix(in srgb, var(--accent) 42%, transparent);
+      outline-offset: 3px;
+    }}
+    .downloaded-entry {{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-width: 0;
+      padding: 7px 9px;
+      border-top: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 88%, var(--soft) 12%);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 750;
+      line-height: 1;
+    }}
+    .downloaded-label {{
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    .downloaded-entry strong {{
+      flex: 0 0 auto;
+      color: var(--fg);
+      font-size: 18px;
+      line-height: 1;
+    }}
+    .mag-cover {{
+      display: block;
+      width: 100%;
+      aspect-ratio: 210 / 297;
+      border: 0;
+      border-radius: 0;
       overflow: hidden;
       background: var(--soft);
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--panel) 60%, transparent);
     }}
     .mag-cover img {{
       display: block;
@@ -1374,6 +1673,9 @@ def page(title: str, body: str) -> str:
     }}
     .mag-main {{
       min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }}
     .mag-title {{
       display: flex;
@@ -1401,13 +1703,13 @@ def page(title: str, body: str) -> str:
     }}
     .chip-form {{
       max-width: none;
-      margin-top: 10px;
+      margin-top: 0;
     }}
     .mag-stats {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
-      margin-top: 12px;
+      margin-top: 0;
     }}
     .stat {{
       display: grid;
@@ -1415,6 +1717,7 @@ def page(title: str, body: str) -> str:
       align-items: center;
       gap: 8px;
       min-height: 44px;
+      padding: 8px 12px;
       border-color: var(--line);
       background: var(--panel);
       color: var(--fg);
@@ -1496,6 +1799,29 @@ def page(title: str, body: str) -> str:
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 12px;
+      min-width: 0;
+    }}
+    .carousel-card {{
+      display: grid;
+      grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+      min-height: 260px;
+    }}
+    .carousel-cover {{
+      aspect-ratio: 210 / 297;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--soft);
+    }}
+    .carousel-cover img {{
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }}
+    .carousel-detail {{
       min-width: 0;
     }}
     .list-title {{
@@ -1586,17 +1912,21 @@ def page(title: str, body: str) -> str:
         grid-template-columns: 1fr;
       }}
       .mag-card {{
-        grid-template-columns: 92px minmax(0, 1fr);
+        grid-template-columns: 104px minmax(0, 1fr);
       }}
-      .mag-cover {{
-        width: 92px;
+      .mag-cover-block {{
+        width: 104px;
       }}
       .modal-tools {{
-        align-items: stretch;
-        flex-direction: column;
+        display: grid;
+        grid-template-columns: 1fr;
       }}
       .modal-tools input {{
+        width: 100%;
         max-width: none;
+      }}
+      .modal-tools button {{
+        width: 100%;
       }}
       .settings-grid {{
         grid-template-columns: 1fr;
@@ -1620,8 +1950,8 @@ def page(title: str, body: str) -> str:
       .mag-card {{
         grid-template-columns: 1fr;
       }}
-      .mag-cover {{
-        width: min(112px, 38vw);
+      .mag-cover-block {{
+        width: min(104px, 38vw);
       }}
       .mag-title {{
         flex-direction: column;
@@ -1643,6 +1973,12 @@ def page(title: str, body: str) -> str:
       .download-actions .button-link {{
         justify-content: center;
         width: 100%;
+      }}
+      .carousel-card {{
+        grid-template-columns: 1fr;
+      }}
+      .carousel-cover {{
+        width: min(180px, 55vw);
       }}
       .viewer-bar {{
         align-items: stretch;

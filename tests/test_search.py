@@ -152,6 +152,65 @@ def test_search_progress_does_not_emit_raw_found_events(monkeypatch):
     assert any(event["event"] == "skipped" and event["reason"] == "title_mismatch" for event in events)
 
 
+def test_search_does_not_add_url_for_active_duplicate_release(monkeypatch):
+    add_url_calls = []
+
+    class DuplicateDb(FakeDb):
+        def has_active_release_download(
+            self,
+            magazine_id,
+            issue_key,
+            release_title,
+            download_url,
+        ):
+            return True
+
+    class FakeClient:
+        def __init__(self, base_url, api_key):
+            pass
+
+        def search(self, query, category, on_page=None):
+            results = [
+                QuasarrResult(
+                    "Magazine Title May 2026",
+                    "https://example.test/magazine-title-may",
+                    "Tue, 05 May 2026 10:00:00 +0000",
+                    50 * 1024 * 1024,
+                    "quasarr",
+                )
+            ]
+            on_page(0, results)
+            return results
+
+        def add_url(self, download_url, category):
+            add_url_calls.append((download_url, category))
+            return ["pkg"]
+
+    import magazarr.search as search
+
+    monkeypatch.setattr(search, "QuasarrClient", FakeClient)
+    events = []
+
+    downloads = search_magazine(
+        DuplicateDb(),
+        SimpleNamespace(
+            quasarr_url="http://quasarr",
+            quasarr_api_key="key",
+            quasarr_search_category="7000",
+            quasarr_download_category="docs",
+            past_days=999,
+            min_size_mb=1,
+            max_size_mb=0,
+        ),
+        {"id": 7, "title": "Magazine Title"},
+        events.append,
+    )
+
+    assert downloads == []
+    assert add_url_calls == []
+    assert any(event["event"] == "skipped" and event["reason"] == "duplicate" for event in events)
+
+
 def test_numbered_release_is_duplicate_when_matching_dated_issue_exists():
     class ExistingDateDb(FakeDb):
         def has_issue_or_download(self, magazine_id, issue_key):
