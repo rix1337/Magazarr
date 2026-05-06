@@ -13,7 +13,7 @@ from magazarr.utils import (
 
 
 def test_search_term_matches_lazylibrarian_style_cleanup():
-    assert search_term("Edge & Space/Time") == "Edge and Space Time"
+    assert search_term("Fiction & Space/Time") == "Fiction and Space Time"
 
 
 def test_title_match_uses_tokens_not_substrings():
@@ -78,6 +78,30 @@ def test_weekly_number_aliases_can_match_dated_titles():
         "",
         issue,
         modes,
+    )
+
+
+def test_monthly_number_aliases_match_month_year_titles():
+    modes = infer_numbering_modes(
+        [
+            "Magazine Title Issue 04 2026",
+            "Magazine Title Issue 05 2026",
+            "Magazine Title Issue 06 2026",
+        ]
+    )
+
+    assert modes == {2026: "monthly"}
+    assert "2026-issue-0005" in issue_aliases(
+        "Magazine Title UK May 2026",
+        "",
+        None,
+        modes,
+    )
+
+
+def test_issue_number_release_aliases_numeric_month_year():
+    assert issue_aliases("Magazine Title UK - 2026 05") & issue_aliases(
+        "Magazine Title UK - Issue 421, 2026 05",
     )
 
 

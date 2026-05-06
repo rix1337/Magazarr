@@ -3,7 +3,7 @@ from magazarr.settings import Settings, SettingsStore
 
 def test_default_automation_interval_is_60_minutes():
     assert Settings().automation_interval_minutes == 60
-    assert Settings().import_check_interval_minutes == 5
+    assert Settings().import_check_interval_minutes == 1
 
 
 def test_docker_default_library_dir_is_absolute(monkeypatch):

@@ -50,7 +50,18 @@ def search_magazine(db, settings: Settings, magazine, on_progress=None) -> list[
     candidates = filter_candidates(db, settings, magazine, results, on_progress)
 
     downloads = _dedupe_candidates(candidates)
+    sent_downloads = []
     for candidate in downloads:
+        if _has_active_release_download(db, candidate):
+            _emit(
+                on_progress,
+                "skipped",
+                magazine,
+                release_title=candidate.title,
+                reason="duplicate",
+                details=candidate.issue_key,
+            )
+            continue
         _emit(on_progress, "sending", magazine, release_title=candidate.title)
         try:
             package_ids = client.add_url(
@@ -74,6 +85,7 @@ def search_magazine(db, settings: Settings, magazine, on_progress=None) -> list[
             candidate.title,
             package_id,
         )
+        sent_downloads.append(candidate)
         logger.info(f"Sent {candidate.title} to Quasarr as {package_id or 'unknown'}")
         _emit(
             on_progress,
@@ -82,7 +94,7 @@ def search_magazine(db, settings: Settings, magazine, on_progress=None) -> list[
             release_title=candidate.title,
             package_id=package_id or "",
         )
-    return downloads
+    return sent_downloads
 
 
 def search_all(db, settings: Settings, on_progress=None) -> dict[str, int]:
@@ -202,6 +214,17 @@ def _existing_aliases(db, magazine_id: int, numbering_modes: dict[int, str]) -> 
             issue = IssueDate(str(key), None)
         aliases.update(issue_aliases(title, pub_date, issue, numbering_modes))
     return aliases
+
+
+def _has_active_release_download(db, candidate: Candidate) -> bool:
+    if hasattr(db, "has_active_release_download"):
+        return db.has_active_release_download(
+            candidate.magazine_id,
+            candidate.issue_key,
+            candidate.title,
+            candidate.download_url,
+        )
+    return db.has_issue_or_download(candidate.magazine_id, candidate.issue_key)
 
 
 def _record_skip(db, magazine, result: QuasarrResult, reason: str, issue_key: str = ""):
