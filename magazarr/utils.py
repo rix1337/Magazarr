@@ -118,6 +118,12 @@ def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
         if value:
             return IssueDate(value.isoformat(), value)
 
+    match = re.search(r"\b(20\d{2})[ ._-](0?[1-9]|1[0-2])\b", clean)
+    if match:
+        value = _date(int(match.group(1)), int(match.group(2)), 1)
+        if value:
+            return IssueDate(value.isoformat(), value)
+
     words = clean.split()
     for idx, word in enumerate(words):
         month = MONTHS.get(word)
@@ -154,6 +160,10 @@ def parse_issue_number(title: str) -> IssueNumber | None:
         number_word = words[idx + 1]
         if not number_word.isdigit():
             continue
+        if re.fullmatch(r"20\d{2}", number_word):
+            next_words = words[idx + 2 : idx + 4]
+            if next_words and all(word.isdigit() for word in next_words):
+                continue
         number = int(number_word)
         if number <= 0:
             continue
@@ -184,7 +194,8 @@ def issue_aliases(
             aliases.add(f"{number.year}-issue-{number.number:04d}")
         aliases.add(f"issue-{number.number:04d}")
 
-    aliases.update(_month_year_aliases(title))
+    if not (issue and issue.value and issue.value.day != 1):
+        aliases.update(_month_year_aliases(title))
     return aliases
 
 
