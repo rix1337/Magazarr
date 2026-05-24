@@ -170,7 +170,6 @@ def issue_aliases(
     title: str,
     pub_date: str = "",
     issue: IssueDate | None = None,
-    numbering_modes: dict[int, str] | None = None,
 ) -> set[str]:
     issue = issue or parse_issue_date(title, pub_date)
     aliases = set()
@@ -178,36 +177,15 @@ def issue_aliases(
         aliases.add(issue.key)
         if issue.value:
             aliases.add(f"date:{issue.value.isoformat()}")
-            aliases.update(_date_number_aliases(issue.value, numbering_modes))
 
     number = parse_issue_number(title)
     if number:
         if number.year:
             aliases.add(f"{number.year}-issue-{number.number:04d}")
-            aliases.update(_number_date_aliases(number, numbering_modes))
         aliases.add(f"issue-{number.number:04d}")
 
-    aliases.update(_month_year_aliases(title, numbering_modes))
-    parsed_pub = parse_rfc822(pub_date)
-    if parsed_pub:
-        aliases.add(f"pubdate:{parsed_pub.date().isoformat()}")
+    aliases.update(_month_year_aliases(title))
     return aliases
-
-
-def infer_numbering_modes(titles: list[str]) -> dict[int, str]:
-    numbers_by_year: dict[int, set[int]] = {}
-    for title in titles:
-        number = parse_issue_number(title)
-        if not number or not number.year:
-            continue
-        numbers_by_year.setdefault(number.year, set()).add(number.number)
-
-    modes = {}
-    for year, numbers in numbers_by_year.items():
-        if len(numbers) <= 2:
-            continue
-        modes[year] = "monthly" if max(numbers) <= 12 else "weekly"
-    return modes
 
 
 def parse_rfc822(value: str) -> datetime | None:
@@ -287,38 +265,7 @@ def _date(year: int, month: int, day: int) -> date | None:
         return None
 
 
-def _date_number_aliases(value: date, numbering_modes: dict[int, str] | None) -> set[str]:
-    mode = (numbering_modes or {}).get(value.year)
-    if mode == "monthly":
-        return {f"{value.year}-issue-{value.month:04d}"}
-    if mode == "weekly":
-        iso_week = value.isocalendar().week
-        ordinal_week = ((value.timetuple().tm_yday - 1) // 7) + 1
-        numbers = {iso_week + 1, ordinal_week + 1}
-        return {
-            f"{value.year}-issue-{number:04d}"
-            for number in numbers
-            if 1 <= number <= 53
-        }
-    return set()
-
-
-def _number_date_aliases(
-    number: IssueNumber,
-    numbering_modes: dict[int, str] | None,
-) -> set[str]:
-    if number.year is None:
-        return set()
-    mode = (numbering_modes or {}).get(number.year)
-    if mode == "monthly" and 1 <= number.number <= 12:
-        return {f"{number.year}-{number.number:02d}-01"}
-    return set()
-
-
-def _month_year_aliases(
-    title: str,
-    numbering_modes: dict[int, str] | None,
-) -> set[str]:
+def _month_year_aliases(title: str) -> set[str]:
     words = tokens(title)
     aliases = set()
     for idx, word in enumerate(words):
@@ -328,7 +275,6 @@ def _month_year_aliases(
             value = date(year, month, 1)
             aliases.add(value.isoformat())
             aliases.add(f"date:{value.isoformat()}")
-            aliases.update(_date_number_aliases(value, numbering_modes))
             continue
         if re.fullmatch(r"20\d{2}", word):
             for pos in (idx + 1, idx - 1):
@@ -338,5 +284,4 @@ def _month_year_aliases(
                         value = date(int(word), month, 1)
                         aliases.add(value.isoformat())
                         aliases.add(f"date:{value.isoformat()}")
-                        aliases.update(_date_number_aliases(value, numbering_modes))
     return aliases
