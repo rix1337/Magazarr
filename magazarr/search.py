@@ -9,7 +9,6 @@ from magazarr.quasarr_client import QuasarrClient, QuasarrResult
 from magazarr.settings import Settings
 from magazarr.utils import (
     IssueDate,
-    infer_numbering_modes,
     issue_aliases,
     magazine_title_matches,
     parse_issue_date,
@@ -117,14 +116,7 @@ def filter_candidates(
     min_size = settings.min_size_mb * 1024 * 1024
     max_size = settings.max_size_mb * 1024 * 1024
     blacklist_terms = db.blacklist_terms(magazine["id"]) if hasattr(db, "blacklist_terms") else []
-    numbering_modes = infer_numbering_modes(
-        [
-            result.title
-            for result in results
-            if magazine_title_matches(magazine["title"], result.title)
-        ]
-    )
-    existing_aliases = _existing_aliases(db, magazine["id"], numbering_modes)
+    existing_aliases = _existing_aliases(db, magazine["id"])
 
     for result in results:
         recent_by_pub_date = pub_date_within_past_days(result.pub_date, settings.past_days)
@@ -163,7 +155,7 @@ def filter_candidates(
             _record_skip(db, magazine, result, "outside_past_days", issue.key)
             _emit_skip(on_progress, magazine, result, "outside_past_days", issue.key)
             continue
-        aliases = issue_aliases(result.title, result.pub_date, issue, numbering_modes)
+        aliases = issue_aliases(result.title, result.pub_date, issue)
         if db.has_issue_or_download(magazine["id"], issue.key) or aliases & existing_aliases:
             _record_skip(db, magazine, result, "duplicate", issue.key)
             _emit_skip(on_progress, magazine, result, "duplicate", issue.key)
@@ -201,7 +193,7 @@ def _dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:
     return downloads
 
 
-def _existing_aliases(db, magazine_id: int, numbering_modes: dict[int, str]) -> set[str]:
+def _existing_aliases(db, magazine_id: int) -> set[str]:
     aliases = set()
     if not hasattr(db, "issue_records"):
         return aliases
@@ -212,7 +204,7 @@ def _existing_aliases(db, magazine_id: int, numbering_modes: dict[int, str]) -> 
         issue = parse_issue_date(title, pub_date) or parse_issue_date(key)
         if issue is None and key:
             issue = IssueDate(str(key), None)
-        aliases.update(issue_aliases(title, pub_date, issue, numbering_modes))
+        aliases.update(issue_aliases(title, pub_date, issue))
     return aliases
 
 

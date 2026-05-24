@@ -1,7 +1,6 @@
 from datetime import date, timedelta
 
 from magazarr.utils import (
-    infer_numbering_modes,
     issue_aliases,
     magazine_title_matches,
     parse_issue_date,
@@ -61,41 +60,20 @@ def test_parse_numbered_magazine_release():
     assert number.number == 23
 
 
-def test_weekly_number_aliases_can_match_dated_titles():
-    modes = infer_numbering_modes(
-        [
-            "Magazine Title No 18 2026",
-            "Magazine Title No 19 2026",
-            "Magazine Title No 20 2026",
-        ]
-    )
+def test_weekly_date_aliases_do_not_guess_issue_numbers():
     issue = parse_issue_date("Magazine Title News Magazine 2026 04 30")
 
-    assert modes == {2026: "weekly"}
     assert issue is not None
-    assert "2026-issue-0019" in issue_aliases(
+    assert "2026-issue-0019" not in issue_aliases(
         "Magazine Title News Magazine 2026 04 30",
         "",
         issue,
-        modes,
     )
 
 
-def test_monthly_number_aliases_match_month_year_titles():
-    modes = infer_numbering_modes(
-        [
-            "Magazine Title Issue 04 2026",
-            "Magazine Title Issue 05 2026",
-            "Magazine Title Issue 06 2026",
-        ]
-    )
-
-    assert modes == {2026: "monthly"}
-    assert "2026-issue-0005" in issue_aliases(
+def test_monthly_date_aliases_do_not_guess_issue_numbers():
+    assert "2026-issue-0005" not in issue_aliases(
         "Magazine Title UK May 2026",
-        "",
-        None,
-        modes,
     )
 
 
