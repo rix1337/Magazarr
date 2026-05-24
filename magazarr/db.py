@@ -566,6 +566,38 @@ class Database:
                 ),
             )
 
+    def has_skipped_release(self, magazine_id: int, release_title: str, download_url: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM skipped_releases
+                WHERE magazine_id=?
+                  AND status='skipped'
+                  AND (
+                    release_title=? COLLATE NOCASE
+                    OR download_url=?
+                  )
+                UNION
+                SELECT 1 FROM downloads
+                WHERE magazine_id=?
+                  AND status IN ('import_error', 'download_error')
+                  AND (
+                    release_title=? COLLATE NOCASE
+                    OR download_url=?
+                  )
+                LIMIT 1
+                """,
+                (
+                    magazine_id,
+                    release_title,
+                    download_url,
+                    magazine_id,
+                    release_title,
+                    download_url,
+                ),
+            ).fetchone()
+            return row is not None
+
     def skipped_releases(
         self,
         limit=50,
@@ -656,6 +688,7 @@ class Database:
 
     def delete_import_errors(self, magazine_id: int | None = None):
         with self.connect() as conn:
+            self._preserve_failed_downloads_as_skipped(conn, magazine_id)
             if magazine_id is None:
                 conn.execute(
                     """
@@ -671,6 +704,41 @@ class Database:
                     """,
                     (magazine_id,),
                 )
+
+    def _preserve_failed_downloads_as_skipped(self, conn, magazine_id: int | None):
+        where = "status IN ('import_error', 'download_error')"
+        params: tuple[object, ...] = ()
+        if magazine_id is not None:
+            where = f"magazine_id=? AND {where}"
+            params = (magazine_id,)
+        conn.execute(
+            f"""
+            INSERT INTO skipped_releases(
+                magazine_id, issue_key, release_title, download_url,
+                size_bytes, reason, status
+            )
+            SELECT
+                magazine_id,
+                issue_key,
+                release_title,
+                download_url,
+                size_bytes,
+                CASE status
+                    WHEN 'download_error' THEN 'Deleted download error'
+                    ELSE 'Deleted import error'
+                END,
+                'skipped'
+            FROM downloads
+            WHERE {where}
+            ON CONFLICT(magazine_id, release_title, reason) DO UPDATE SET
+                issue_key=excluded.issue_key,
+                download_url=excluded.download_url,
+                size_bytes=excluded.size_bytes,
+                status='skipped',
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            params,
+        )
 
     def import_errors(
         self,

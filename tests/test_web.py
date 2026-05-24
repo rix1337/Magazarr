@@ -404,8 +404,41 @@ def test_delete_errors_bulk_action_keeps_skipped_rows(tmp_path):
 
     assert status.startswith("302")
     assert db.import_error_count(magazine["id"]) == 0
+    assert total == 2
+    assert [row["item_kind"] for row in rows] == ["skipped", "skipped"]
+    assert {row["release_title"] for row in rows} == {
+        "Magazine Title - 2026 05",
+        "Magazine Title June 2026",
+    }
+
+
+def test_delete_download_errors_preserves_skipped_release_info(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    db.record_manual_download(
+        magazine["id"],
+        "2026-05-01",
+        "Magazine Title - 2026 05",
+        "https://example.test/magazine-title",
+        1234,
+        "Quasarr_docs_123",
+    )
+    db.update_download_status(db.downloads()[0]["id"], "download_error")
+    app = create_app(SettingsStore(tmp_path / "settings.json"), db)
+
+    status, headers, body = _wsgi_post(
+        app,
+        f"/magazines/{magazine['id']}/errors/delete",
+    )
+    rows, total = _combined_skipped_payload(app, magazine["id"])
+
+    assert status.startswith("302")
+    assert db.import_error_count(magazine["id"]) == 0
     assert total == 1
-    assert [row["item_kind"] for row in rows] == ["skipped"]
+    assert rows[0]["release_title"] == "Magazine Title - 2026 05"
+    assert rows[0]["reason"] == "Deleted download error"
 
 
 def test_quasarr_public_url_prefers_external_url():
