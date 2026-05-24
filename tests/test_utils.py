@@ -50,6 +50,12 @@ def test_parse_issue_number():
     assert issue.key == "issue-0116"
 
 
+def test_parse_numeric_year_month_issue_date():
+    issue = parse_issue_date("Magazine Title UK 2026 04")
+    assert issue is not None
+    assert issue.key == "2026-04-01"
+
+
 def test_parse_numbered_magazine_release():
     number = parse_issue_number(
         "Magazine.Title.No.23.2024.GERMAN.Retail.MAGAZiNE.eBook"
@@ -58,6 +64,10 @@ def test_parse_numbered_magazine_release():
     assert number is not None
     assert number.year == 2024
     assert number.number == 23
+
+
+def test_parse_issue_number_ignores_no_before_full_date():
+    assert parse_issue_number("Magazine Title No 2026 06 06") is None
 
 
 def test_weekly_date_aliases_do_not_guess_issue_numbers():
@@ -81,6 +91,10 @@ def test_issue_number_release_aliases_numeric_month_year():
     assert issue_aliases("Magazine Title UK - 2026 05") & issue_aliases(
         "Magazine Title UK - Issue 421, 2026 05",
     )
+
+
+def test_day_level_date_aliases_do_not_add_month_alias():
+    assert "2026-04-01" not in issue_aliases("Weekly Title 2026 04 30")
 
 
 def test_within_past_days_uses_issue_date():

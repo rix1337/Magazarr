@@ -298,3 +298,161 @@ def test_dedupe_candidates_keeps_distinct_issues_with_same_pub_date():
         "Weekly Title No 10 2026 05 02",
         "Weekly Title No 08 2026",
     ]
+
+
+def test_date_only_release_duplicates_numbered_issue_when_sequence_is_anchored():
+    class ExistingNumberDb(FakeDb):
+        def has_issue_or_download(self, magazine_id, issue_key):
+            return False
+
+        def issue_records(self, magazine_id):
+            return [
+                {
+                    "issue_key": "2026-issue-0018",
+                    "release_title": "Weekly Title News Magazine No 18 2026",
+                    "pub_date": "",
+                }
+            ]
+
+    settings = SimpleNamespace(past_days=999, min_size_mb=1, max_size_mb=0)
+    magazine = {"id": 7, "title": "Weekly Title"}
+    db = ExistingNumberDb()
+
+    candidates = filter_candidates(
+        db,
+        settings,
+        magazine,
+        [
+            QuasarrResult(
+                "Weekly Title News Magazine No 17 2026 04 17",
+                "https://example.test/17",
+                "Sun, 24 May 2026 21:51:22 +0000",
+                50 * 1024 * 1024,
+                "quasarr",
+            ),
+            QuasarrResult(
+                "Weekly Title News Magazine No 19 2026 05 01",
+                "https://example.test/19",
+                "Sun, 24 May 2026 21:51:22 +0000",
+                50 * 1024 * 1024,
+                "quasarr",
+            ),
+            QuasarrResult(
+                "Weekly Title - 2026 04 24",
+                "https://example.test/date-only",
+                "Sun, 24 May 2026 21:51:22 +0000",
+                50 * 1024 * 1024,
+                "quasarr",
+            ),
+        ],
+    )
+
+    assert [item.title for item in candidates] == [
+        "Weekly Title News Magazine No 17 2026 04 17",
+        "Weekly Title News Magazine No 19 2026 05 01",
+    ]
+    assert db.skipped == [
+        (7, "Weekly Title - 2026 04 24", "duplicate", "2026-04-24"),
+    ]
+
+
+def test_single_sequence_anchor_does_not_infer_duplicate():
+    class ExistingNumberDb(FakeDb):
+        def has_issue_or_download(self, magazine_id, issue_key):
+            return False
+
+        def issue_records(self, magazine_id):
+            return [
+                {
+                    "issue_key": "2026-issue-0018",
+                    "release_title": "Weekly Title News Magazine No 18 2026",
+                    "pub_date": "",
+                }
+            ]
+
+    settings = SimpleNamespace(past_days=999, min_size_mb=1, max_size_mb=0)
+    magazine = {"id": 7, "title": "Weekly Title"}
+    db = ExistingNumberDb()
+
+    candidates = filter_candidates(
+        db,
+        settings,
+        magazine,
+        [
+            QuasarrResult(
+                "Weekly Title News Magazine No 19 2026 05 01",
+                "https://example.test/19",
+                "Sun, 24 May 2026 21:51:22 +0000",
+                50 * 1024 * 1024,
+                "quasarr",
+            ),
+            QuasarrResult(
+                "Weekly Title - 2026 04 24",
+                "https://example.test/date-only",
+                "Sun, 24 May 2026 21:51:22 +0000",
+                50 * 1024 * 1024,
+                "quasarr",
+            ),
+        ],
+    )
+
+    assert [item.title for item in candidates] == [
+        "Weekly Title News Magazine No 19 2026 05 01",
+        "Weekly Title - 2026 04 24",
+    ]
+    assert db.skipped == []
+
+
+def test_sequence_inference_keeps_variants_separate():
+    class ExistingSpecialDb(FakeDb):
+        def has_issue_or_download(self, magazine_id, issue_key):
+            return False
+
+        def issue_records(self, magazine_id):
+            return [
+                {
+                    "issue_key": "2026-issue-0002",
+                    "release_title": "Tech Title Make No 02 2026",
+                    "pub_date": "",
+                }
+            ]
+
+    settings = SimpleNamespace(past_days=999, min_size_mb=1, max_size_mb=0)
+    magazine = {"id": 7, "title": "Tech Title"}
+    db = ExistingSpecialDb()
+
+    candidates = filter_candidates(
+        db,
+        settings,
+        magazine,
+        [
+            QuasarrResult(
+                "Tech Title No 01 2026 01 03",
+                "https://example.test/normal-1",
+                "Sun, 24 May 2026 21:51:22 +0000",
+                50 * 1024 * 1024,
+                "quasarr",
+            ),
+            QuasarrResult(
+                "Tech Title No 03 2026 01 17",
+                "https://example.test/normal-3",
+                "Sun, 24 May 2026 21:51:22 +0000",
+                50 * 1024 * 1024,
+                "quasarr",
+            ),
+            QuasarrResult(
+                "Tech Title - 2026 01 10",
+                "https://example.test/normal-date",
+                "Sun, 24 May 2026 21:51:22 +0000",
+                50 * 1024 * 1024,
+                "quasarr",
+            ),
+        ],
+    )
+
+    assert [item.title for item in candidates] == [
+        "Tech Title No 01 2026 01 03",
+        "Tech Title No 03 2026 01 17",
+        "Tech Title - 2026 01 10",
+    ]
+    assert db.skipped == []
