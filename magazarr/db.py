@@ -268,7 +268,7 @@ class Database:
                 UNION
                 SELECT 1 FROM downloads
                 WHERE magazine_id=? AND issue_key=?
-                  AND status IN ('snatched', 'completed', 'import_error', 'imported')
+                  AND status IN ('snatched', 'completed', 'imported')
                 LIMIT 1
                 """,
                 (magazine_id, issue_key, magazine_id, issue_key),
@@ -289,7 +289,7 @@ class Database:
                 UNION
                 SELECT 1 FROM downloads
                 WHERE magazine_id=?
-                  AND status IN ('snatched', 'completed', 'import_error', 'imported')
+                  AND status IN ('snatched', 'completed', 'imported')
                   AND (
                     issue_key=?
                     OR release_title=? COLLATE NOCASE
@@ -319,23 +319,24 @@ class Database:
                 SELECT issue_key, release_title, '' AS pub_date
                 FROM downloads
                 WHERE magazine_id=?
-                  AND status IN ('snatched', 'completed', 'import_error', 'imported')
+                  AND status IN ('snatched', 'completed', 'imported')
                 """,
                 (magazine_id, magazine_id),
             ).fetchall()
 
     def record_download(self, magazine_id: int, candidate, package_id: str | None):
+        issue_key = self._available_issue_key(magazine_id, candidate.issue_key)
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT OR IGNORE INTO downloads(
+                INSERT INTO downloads(
                     magazine_id, issue_key, release_title, download_url,
                     package_id, size_bytes, status
                 ) VALUES (?, ?, ?, ?, ?, ?, 'snatched')
                 """,
                 (
                     magazine_id,
-                    candidate.issue_key,
+                    issue_key,
                     candidate.title,
                     candidate.download_url,
                     package_id,
