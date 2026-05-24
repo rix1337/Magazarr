@@ -83,6 +83,37 @@ def test_filter_candidates_skips_old_pub_dates_before_issue_parsing():
     assert db.skipped == []
 
 
+def test_filter_candidates_ignores_releases_before_magazine_added_date():
+    settings = SimpleNamespace(past_days=9999, min_size_mb=1, max_size_mb=0)
+    magazine = {
+        "id": 7,
+        "title": "Magazine Title Three",
+        "added_at": "2026-05-10 12:00:00",
+    }
+    db = FakeDb()
+    events = []
+
+    candidates = filter_candidates(
+        db,
+        settings,
+        magazine,
+        [
+            QuasarrResult(
+                "Magazine Title Three April 2026",
+                "https://example.test/old",
+                "Tue, 12 May 2026 10:00:00 +0000",
+                50 * 1024 * 1024,
+                "quasarr",
+            )
+        ],
+        events.append,
+    )
+
+    assert candidates == []
+    assert db.skipped == []
+    assert events == []
+
+
 def test_filter_candidates_uses_blacklist_terms():
     settings = SimpleNamespace(past_days=999, min_size_mb=1, max_size_mb=0)
     magazine = {"id": 7, "title": "Magazine Title"}

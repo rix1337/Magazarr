@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 from loguru import logger
 
@@ -138,6 +138,7 @@ def filter_candidates(
     candidates = []
     min_size = settings.min_size_mb * 1024 * 1024
     max_size = settings.max_size_mb * 1024 * 1024
+    added_date = _magazine_added_date(magazine)
     blacklist_terms = db.blacklist_terms(magazine["id"]) if hasattr(db, "blacklist_terms") else []
     issue_records = _issue_records(db, magazine["id"])
     profiles = _sequence_profiles(
@@ -152,9 +153,14 @@ def filter_candidates(
     existing_aliases = _existing_aliases(issue_records, profiles, magazine["title"])
 
     for result in results:
+        if _pub_date_before(result.pub_date, added_date):
+            continue
         recent_by_pub_date = pub_date_within_past_days(result.pub_date, settings.past_days)
         if recent_by_pub_date is False:
             _emit_skip(on_progress, magazine, result, "outside_past_days", result.pub_date)
+            continue
+        issue = parse_issue_date(result.title, result.pub_date)
+        if issue and issue.value and added_date and issue.value < added_date:
             continue
         blacklisted_by = next(
             (
@@ -179,7 +185,6 @@ def filter_candidates(
         if not magazine_title_matches(magazine["title"], result.title):
             _emit_skip(on_progress, magazine, result, "title_mismatch")
             continue
-        issue = parse_issue_date(result.title, result.pub_date)
         if not issue:
             _record_skip(db, magazine, result, "issue_unparsed")
             _emit_skip(on_progress, magazine, result, "issue_unparsed")
@@ -212,6 +217,26 @@ def filter_candidates(
             issue_key=issue.key,
         )
     return candidates
+
+
+def _magazine_added_date(magazine) -> date | None:
+    try:
+        value = str(magazine["added_at"] or "").strip()
+    except (KeyError, TypeError):
+        return None
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _pub_date_before(pub_date: str, minimum: date | None) -> bool:
+    if minimum is None:
+        return False
+    parsed = parse_issue_date("", pub_date)
+    return bool(parsed and parsed.value and parsed.value < minimum)
 
 
 def _dedupe_candidates(candidates: list[Candidate]) -> list[Candidate]:

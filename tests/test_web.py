@@ -408,6 +408,48 @@ def test_delete_errors_bulk_action_keeps_skipped_rows(tmp_path):
     assert [row["item_kind"] for row in rows] == ["skipped"]
 
 
+def test_skipped_view_hides_releases_before_magazine_added_date(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE magazines SET added_at='2026-05-10 12:00:00' WHERE id=?",
+            (magazine["id"],),
+        )
+    db.record_skipped_release(
+        magazine["id"],
+        QuasarrResult(
+            "Magazine Title - 2026 04",
+            "https://example.test/old",
+            "Tue, 12 May 2026 10:00:00 +0000",
+            42,
+            "quasarr",
+        ),
+        "outside_past_days",
+        "2026-04-01",
+    )
+    db.record_skipped_release(
+        magazine["id"],
+        QuasarrResult(
+            "Magazine Title - 2026 05",
+            "https://example.test/new",
+            "Tue, 12 May 2026 10:00:00 +0000",
+            42,
+            "quasarr",
+        ),
+        "blacklisted",
+        "2026-05-10",
+    )
+    app = create_app(SettingsStore(tmp_path / "settings.json"), db)
+
+    rows, total = _combined_skipped_payload(app, magazine["id"])
+
+    assert total == 1
+    assert [row["release_title"] for row in rows] == ["Magazine Title - 2026 05"]
+
+
 def test_quasarr_public_url_prefers_external_url():
     settings = Settings(
         quasarr_url="http://127.0.0.1:8080",

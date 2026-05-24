@@ -4,6 +4,24 @@ import sqlite3
 from pathlib import Path
 
 
+def _visible_skipped_release_clause() -> str:
+    return """
+        (
+            s.reason NOT IN (
+                'blacklisted',
+                'duplicate',
+                'issue_unparsed',
+                'outside_past_days',
+                'too_large',
+                'too_small'
+            )
+            OR
+            substr(s.issue_key, 1, 10) NOT GLOB '20[0-9][0-9]-[0-1][0-9]-[0-3][0-9]'
+            OR substr(s.issue_key, 1, 10) >= date(m.added_at)
+        )
+    """
+
+
 class Database:
     def __init__(self, path: Path):
         self.path = path
@@ -572,7 +590,7 @@ class Database:
         search="",
         magazine_id: int | None = None,
     ):
-        where = "WHERE s.status='skipped'"
+        where = f"WHERE s.status='skipped' AND {_visible_skipped_release_clause()}"
         params: list[object] = []
         if magazine_id is not None:
             where += " AND s.magazine_id=?"
@@ -596,7 +614,7 @@ class Database:
             ).fetchall()
 
     def skipped_release_count(self, search="", magazine_id: int | None = None) -> int:
-        where = "WHERE s.status='skipped'"
+        where = f"WHERE s.status='skipped' AND {_visible_skipped_release_clause()}"
         params: list[object] = []
         if magazine_id is not None:
             where += " AND s.magazine_id=?"
