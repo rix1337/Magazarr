@@ -175,6 +175,9 @@ def filter_candidates(
             _record_skip(db, magazine, result, "too_large")
             _emit_skip(on_progress, magazine, result, "too_large")
             continue
+        if _has_skipped_release(db, magazine["id"], result):
+            _emit_skip(on_progress, magazine, result, "skipped")
+            continue
         if not magazine_title_matches(magazine["title"], result.title):
             _emit_skip(on_progress, magazine, result, "title_mismatch")
             continue
@@ -490,6 +493,12 @@ def _has_active_release_download(db, candidate: Candidate) -> bool:
             candidate.download_url,
         )
     return db.has_issue_or_download(candidate.magazine_id, candidate.issue_key)
+
+
+def _has_skipped_release(db, magazine_id: int, result: QuasarrResult) -> bool:
+    if not hasattr(db, "has_skipped_release"):
+        return False
+    return db.has_skipped_release(magazine_id, result.title, result.download_url)
 
 
 def _record_skip(db, magazine, result: QuasarrResult, reason: str, issue_key: str = ""):

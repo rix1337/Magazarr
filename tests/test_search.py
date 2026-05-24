@@ -309,6 +309,142 @@ def test_search_retries_issue_after_import_error_with_new_release(tmp_path, monk
     ]
 
 
+def test_search_does_not_retry_skipped_import_error_release(tmp_path, monkeypatch):
+    add_url_calls = []
+
+    class FakeClient:
+        def __init__(self, base_url, api_key):
+            pass
+
+        def search(self, query, category, on_page=None):
+            results = [
+                QuasarrResult(
+                    "Magazine Title June 2026",
+                    "https://example.test/magazine-title-june-bad",
+                    "Tue, 02 Jun 2026 10:00:00 +0000",
+                    50 * 1024 * 1024,
+                    "quasarr",
+                ),
+                QuasarrResult(
+                    "Magazine Title June 2026 Alternate",
+                    "https://example.test/magazine-title-june-alt",
+                    "Tue, 02 Jun 2026 10:00:00 +0000",
+                    49 * 1024 * 1024,
+                    "quasarr",
+                ),
+            ]
+            on_page(0, results)
+            return results
+
+        def add_url(self, download_url, category):
+            add_url_calls.append((download_url, category))
+            return ["Quasarr_docs_456"]
+
+    import magazarr.search as search
+
+    monkeypatch.setattr(search, "QuasarrClient", FakeClient)
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    db.record_manual_download(
+        magazine["id"],
+        "2026-06-01",
+        "Magazine Title June 2026",
+        "https://example.test/magazine-title-june-bad",
+        1234,
+        "Quasarr_docs_123",
+    )
+    bad_download = db.downloads()[0]
+    db.update_download_status(bad_download["id"], "import_error")
+    db.record_skipped_download(bad_download, "PDF filename does not match magazine")
+
+    downloads = search_magazine(
+        db,
+        SimpleNamespace(
+            quasarr_url="http://quasarr",
+            quasarr_api_key="key",
+            quasarr_search_category="7000",
+            quasarr_download_category="docs",
+            past_days=999,
+            min_size_mb=1,
+            max_size_mb=0,
+            discord_webhook_url="",
+        ),
+        magazine,
+    )
+
+    assert [item.title for item in downloads] == ["Magazine Title June 2026 Alternate"]
+    assert add_url_calls == [("https://example.test/magazine-title-june-alt", "docs")]
+
+
+def test_search_does_not_retry_download_error_release(tmp_path, monkeypatch):
+    add_url_calls = []
+
+    class FakeClient:
+        def __init__(self, base_url, api_key):
+            pass
+
+        def search(self, query, category, on_page=None):
+            results = [
+                QuasarrResult(
+                    "Magazine Title July 2026",
+                    "https://example.test/magazine-title-july-bad",
+                    "Tue, 07 Jul 2026 10:00:00 +0000",
+                    50 * 1024 * 1024,
+                    "quasarr",
+                ),
+                QuasarrResult(
+                    "Magazine Title July 2026 Alternate",
+                    "https://example.test/magazine-title-july-alt",
+                    "Tue, 07 Jul 2026 10:00:00 +0000",
+                    49 * 1024 * 1024,
+                    "quasarr",
+                ),
+            ]
+            on_page(0, results)
+            return results
+
+        def add_url(self, download_url, category):
+            add_url_calls.append((download_url, category))
+            return ["Quasarr_docs_456"]
+
+    import magazarr.search as search
+
+    monkeypatch.setattr(search, "QuasarrClient", FakeClient)
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    db.record_manual_download(
+        magazine["id"],
+        "2026-07-01",
+        "Magazine Title July 2026",
+        "https://example.test/magazine-title-july-bad",
+        1234,
+        "Quasarr_docs_123",
+    )
+    db.update_download_status(db.downloads()[0]["id"], "download_error")
+
+    downloads = search_magazine(
+        db,
+        SimpleNamespace(
+            quasarr_url="http://quasarr",
+            quasarr_api_key="key",
+            quasarr_search_category="7000",
+            quasarr_download_category="docs",
+            past_days=999,
+            min_size_mb=1,
+            max_size_mb=0,
+            discord_webhook_url="",
+        ),
+        magazine,
+    )
+
+    assert [item.title for item in downloads] == ["Magazine Title July 2026 Alternate"]
+    assert add_url_calls == [("https://example.test/magazine-title-july-alt", "docs")]
+
+
 def test_numbered_release_is_duplicate_when_existing_title_has_same_number():
     class ExistingDateDb(FakeDb):
         def has_issue_or_download(self, magazine_id, issue_key):

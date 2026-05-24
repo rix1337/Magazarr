@@ -171,6 +171,20 @@ def create_app(settings_store: SettingsStore, db, automation=None):
         settings = settings_store.load()
         return json_response(download_status_payload(db, settings))
 
+    @app.get("/api/dashboard")
+    def dashboard_api():
+        settings = settings_store.load()
+        return json_response(
+            {
+                "magazines": magazine_rows(
+                    db.magazines(),
+                    db.blacklist_by_magazine(),
+                    db,
+                    active_download_counts(db, settings),
+                )
+            }
+        )
+
     @app.post("/downloads/<download_id:int>/delete-package")
     def delete_download_package(download_id):
         settings = settings_store.load()
@@ -853,6 +867,8 @@ def page_script() -> str:
       const data = await res.json();
       if (!data.job_id) {
         jobStatus.textContent = "Done";
+        await refreshDashboard();
+        await loadDownloads();
         return;
       }
       pollJob(data.job_id, button);
@@ -881,20 +897,16 @@ def page_script() -> str:
       }
       if (["done", "error"].includes(job.status)) {
         if (button) button.disabled = false;
+        await refreshDashboard();
+        await loadDownloads();
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
 
-  for (const form of document.querySelectorAll(".js-job-form")) {
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      startJob(form);
-    });
-  }
-
   const baseLimit = 25;
+  const magList = document.querySelector(".mag-list");
   const settingsModal = document.getElementById("settings-modal");
   const downloadsModal = document.getElementById("downloads-modal");
   const magazineModal = document.getElementById("magazine-modal");
@@ -917,6 +929,19 @@ def page_script() -> str:
     downloadsModal?.showModal();
     loadDownloads();
   });
+
+  async function refreshDashboard() {
+    if (!magList) return;
+    try {
+      const res = await fetch("/api/dashboard");
+      const data = await res.json();
+      if (typeof data.magazines === "string") {
+        magList.innerHTML = data.magazines;
+      }
+    } catch (error) {
+      console.warn(error);
+    }
+  }
 
   function renderDownloadCard(item, quasarrUrl = "") {
     const card = document.createElement("article");
@@ -1048,13 +1073,23 @@ def page_script() -> str:
     magazineModalCount.textContent = `${data.total} item(s)`;
     const start = data.total ? data.offset + 1 : 0;
     const end = Math.min(data.offset + data.limit, data.total);
-    magazineModalPage.textContent = `${start}-${end}`;
+    magazineModalPage.textContent = activeMagazine.kind === "downloaded"
+      ? `${start}/${data.total}`
+      : `${start}-${end}`;
     magazineModalPrev.disabled = data.offset <= 0;
     magazineModalNext.disabled = data.offset + data.limit >= data.total;
   }
 
-  for (const button of document.querySelectorAll("[data-open-mag-items]")) {
-    button.addEventListener("click", () => {
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || !form.classList.contains("js-job-form")) return;
+    event.preventDefault();
+    startJob(form);
+  });
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-open-mag-items]");
+    if (!button) return;
       activeMagazine = {
         id: button.dataset.magazineId,
         kind: button.dataset.kind,
@@ -1074,8 +1109,7 @@ def page_script() -> str:
       }
       magazineModal?.showModal();
       loadMagazineItems(0);
-    });
-  }
+  });
 
   magazineModalSearch?.addEventListener("input", () => loadMagazineItems(0));
   magazineModalPrev?.addEventListener("click", () => {
@@ -1088,6 +1122,7 @@ def page_script() -> str:
   });
   loadDownloads();
   setInterval(() => {
+    refreshDashboard();
     loadDownloads();
     if (magazineModal?.open && activeMagazine.kind === "downloading") {
       loadMagazineItems(activeMagazine.offset);

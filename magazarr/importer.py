@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import re
 import shutil
 from pathlib import Path
 
@@ -9,7 +10,26 @@ from loguru import logger
 from magazarr.notifications import notify_error, notify_import_success
 from magazarr.quasarr_client import QuasarrClient
 from magazarr.settings import Settings
-from magazarr.utils import MONTHS, parse_issue_date, safe_filename, tokens
+from magazarr.utils import (
+    MONTHS,
+    magazine_title_matches,
+    parse_issue_date,
+    safe_filename,
+    tokens,
+)
+
+GENERIC_PDF_NAME_TOKENS = {
+    "book",
+    "document",
+    "download",
+    "ebook",
+    "file",
+    "issue",
+    "magazine",
+    "pdf",
+    "scan",
+    "test",
+}
 
 
 def import_completed(db, settings: Settings) -> list[str]:
@@ -35,16 +55,18 @@ def import_completed(db, settings: Settings) -> list[str]:
                 f"Download failed: {item.get('fail_message') or item.get('name')}",
                 download,
             )
+            _delete_finished_package(db, client, download, item, "Failed package cleanup")
             continue
         if _history_status(item) != "completed":
             continue
         storage = str(item.get("storage") or "").strip()
         db.update_download_storage(download["id"], storage, "completed")
         if _import_one(db, settings, download, storage):
-            _delete_imported_package(db, client, download, item)
+            _delete_finished_package(db, client, download, item, "Imported package cleanup")
             imported.append(download["release_title"])
         else:
             db.update_download_storage(download["id"], storage, "import_error")
+            _delete_finished_package(db, client, download, item, "Failed import cleanup")
     return imported
 
 
@@ -72,7 +94,7 @@ def _history_status(item: dict) -> str:
     return str(item.get("status") or "").strip().lower()
 
 
-def _delete_imported_package(db, client: QuasarrClient, download, item: dict):
+def _delete_finished_package(db, client: QuasarrClient, download, item: dict, label: str):
     package_id = str(item.get("nzo_id") or download["package_id"] or "").strip()
     if not package_id:
         return
@@ -81,7 +103,7 @@ def _delete_imported_package(db, client: QuasarrClient, download, item: dict):
         if client.delete_package(package_id, title):
             return
     except Exception as exc:
-        message = f"Imported package cleanup failed: {exc}"
+        message = f"{label} failed: {exc}"
     else:
         fallback_id = str(download["package_id"] or "").strip()
         if fallback_id and fallback_id != package_id:
@@ -89,11 +111,11 @@ def _delete_imported_package(db, client: QuasarrClient, download, item: dict):
                 if client.delete_package(fallback_id, title):
                     return
             except Exception as exc:
-                message = f"Imported package cleanup failed: {exc}"
+                message = f"{label} failed: {exc}"
             else:
-                message = f"Imported package cleanup failed: {title}"
+                message = f"{label} failed: {title}"
         else:
-            message = f"Imported package cleanup failed: {title}"
+            message = f"{label} failed: {title}"
     logger.warning(message)
     if hasattr(db, "record_event"):
         db.record_event("warning", "import", message, title)
@@ -117,6 +139,14 @@ def _import_one(db, settings: Settings, download, storage: str) -> bool:
     pdf = _source_pdf(source)
     if not pdf:
         _import_error(db, settings, f"No PDF found in {source}", download)
+        return False
+    if not _pdf_name_matches_download(pdf, download):
+        _import_error(
+            db,
+            settings,
+            f"PDF filename does not match magazine: {pdf.name}",
+            download,
+        )
         return False
 
     pdf_magazine_title = _pdf_title(pdf) or download["magazine_title"]
@@ -254,6 +284,78 @@ def _source_pdf(source: Path) -> Path | None:
     if source.is_dir():
         return _largest_pdf(source)
     return None
+
+
+def _pdf_name_matches_download(pdf: Path, download) -> bool:
+    stem = pdf.stem
+    words = [word for word in tokens(stem) if not word.isdigit()]
+    if not words or set(words) <= GENERIC_PDF_NAME_TOKENS:
+        return True
+    magazine_title = _download_value(download, "magazine_title")
+    return magazine_title_matches(magazine_title, stem) or _fuzzy_title_token_matches(
+        magazine_title,
+        stem,
+    )
+
+
+def _fuzzy_title_token_matches(magazine_title: str, filename: str) -> bool:
+    wanted = [
+        word
+        for word in tokens(magazine_title)
+        if len(word) >= 5 and word not in {"magazine", "journal", "weekly"}
+    ]
+    available = [
+        match.group(0)
+        for word in tokens(filename)
+        for match in re.finditer(r"[a-z]+", word)
+    ]
+    abbreviations = _title_abbreviations(magazine_title)
+    if any(found_word.startswith(abbr) for abbr in abbreviations for found_word in available):
+        return True
+    return any(
+        _near_match(wanted_word, found_word)
+        for wanted_word in wanted
+        for found_word in available
+    )
+
+
+def _title_abbreviations(magazine_title: str) -> set[str]:
+    abbreviations = set()
+    uppercase = "".join(re.findall(r"[A-Z]", magazine_title))
+    if len(uppercase) >= 2:
+        abbreviations.add(uppercase.casefold())
+    initials = "".join(word[0] for word in tokens(magazine_title) if word)
+    if len(initials) >= 2:
+        abbreviations.add(initials)
+    return abbreviations
+
+
+def _near_match(wanted: str, found: str) -> bool:
+    if wanted == found or wanted in found or found in wanted:
+        return True
+    if abs(len(wanted) - len(found)) > 1:
+        return False
+    return _edit_distance_at_most_one(wanted, found)
+
+
+def _edit_distance_at_most_one(left: str, right: str) -> bool:
+    if len(left) > len(right):
+        left, right = right, left
+    edits = 0
+    idx_left = 0
+    idx_right = 0
+    while idx_left < len(left) and idx_right < len(right):
+        if left[idx_left] == right[idx_right]:
+            idx_left += 1
+            idx_right += 1
+            continue
+        edits += 1
+        if edits > 1:
+            return False
+        if len(left) == len(right):
+            idx_left += 1
+        idx_right += 1
+    return True
 
 
 def _pdf_title(pdf: Path) -> str:

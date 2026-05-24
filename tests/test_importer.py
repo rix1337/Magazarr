@@ -210,6 +210,110 @@ def test_history_waits_for_quasarr_completed_status(tmp_path, monkeypatch):
     assert (source_dir / "magazine-title.pdf").exists()
 
 
+def test_failed_history_deletes_quasarr_package(tmp_path, monkeypatch):
+    import magazarr.importer as importer
+
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    package_id = "Quasarr_docs_123"
+    db.record_manual_download(
+        magazine["id"],
+        "2026-05-01",
+        "Magazine Title - 2026 05",
+        "https://example.test/download",
+        1234,
+        package_id,
+    )
+    deleted_packages = []
+
+    class FakeQuasarrClient:
+        def __init__(self, base_url, api_key):
+            pass
+
+        def history(self):
+            return [
+                {
+                    "nzo_id": package_id,
+                    "status": "Failed",
+                    "storage": "",
+                    "name": "Magazine Title - 2026 05",
+                    "fail_message": "Download failed",
+                },
+            ]
+
+        def delete_package(self, package_id, title=""):
+            deleted_packages.append((package_id, title))
+            return True
+
+    monkeypatch.setattr(importer, "QuasarrClient", FakeQuasarrClient)
+
+    imported = import_completed(
+        db,
+        Settings(quasarr_url="http://quasarr", quasarr_api_key="key"),
+    )
+
+    assert imported == []
+    assert db.downloads()[0]["status"] == "download_error"
+    assert deleted_packages == [(package_id, "Magazine Title - 2026 05")]
+
+
+def test_failed_import_deletes_quasarr_package(tmp_path, monkeypatch):
+    import magazarr.importer as importer
+
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    package_id = "Quasarr_docs_123"
+    db.record_manual_download(
+        magazine["id"],
+        "2026-05-01",
+        "Magazine Title - 2026 05",
+        "https://example.test/download",
+        1234,
+        package_id,
+    )
+    source_dir = tmp_path / "Quasarr" / "Magazine Title - 2026 05"
+    source_dir.mkdir(parents=True)
+    (source_dir / "Different Publication May 2026.pdf").write_bytes(b"%PDF-1.4")
+    deleted_packages = []
+
+    class FakeQuasarrClient:
+        def __init__(self, base_url, api_key):
+            pass
+
+        def history(self):
+            return [
+                {
+                    "nzo_id": package_id,
+                    "status": "Completed",
+                    "storage": str(source_dir),
+                    "name": "Magazine Title - 2026 05",
+                },
+            ]
+
+        def delete_package(self, package_id, title=""):
+            deleted_packages.append((package_id, title))
+            return True
+
+    monkeypatch.setattr(importer, "QuasarrClient", FakeQuasarrClient)
+
+    imported = import_completed(
+        db,
+        Settings(
+            quasarr_url="http://quasarr",
+            quasarr_api_key="key",
+            library_dir=str(tmp_path / "library"),
+        ),
+    )
+
+    assert imported == []
+    assert db.downloads()[0]["status"] == "import_error"
+    assert deleted_packages == [(package_id, "Magazine Title - 2026 05")]
+
+
 def test_library_destination_is_nested_and_filesystem_safe(tmp_path):
     settings = Settings(library_dir=str(tmp_path / "library"))
     download = {
@@ -278,6 +382,99 @@ def test_blank_quasarr_storage_does_not_import_from_cwd(tmp_path):
 
     events = db.events()
     assert events[0]["message"] == "Storage path missing from Quasarr history"
+
+
+def test_import_rejects_pdf_name_for_different_magazine(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    source_dir = tmp_path / "Quasarr" / "Magazine Title - 2026 05"
+    source_dir.mkdir(parents=True)
+    pdf = source_dir / "Different Publication May 2026.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    settings = Settings(library_dir=str(tmp_path / "library"))
+    download = {
+        "id": 1,
+        "magazine_id": 42,
+        "magazine_title": "Magazine Title",
+        "issue_key": "2026-05-05",
+        "release_title": "Magazine Title 2026 05",
+        "package_id": "pkg",
+        "download_url": "https://example.invalid/download",
+        "size_bytes": 1234,
+    }
+
+    assert not _import_one(db, settings, download, str(source_dir))
+
+    assert pdf.exists()
+    assert not (tmp_path / "library").exists()
+    events = db.events()
+    assert events[0]["message"] == (
+        "PDF filename does not match magazine: Different Publication May 2026.pdf"
+    )
+
+
+def test_import_allows_compact_typo_pdf_name_for_same_magazine(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    source_dir = tmp_path / "Quasarr" / "Weekly Gazette - 2026 05"
+    source_dir.mkdir(parents=True)
+    (source_dir / "Gazete202620.pdf").write_bytes(b"%PDF-1.4")
+    settings = Settings(library_dir=str(tmp_path / "library"))
+    download = {
+        "id": 1,
+        "magazine_id": 42,
+        "magazine_title": "Weekly Gazette",
+        "issue_key": "2026-05-08",
+        "release_title": "Weekly Gazette No 20 2026 05 08",
+        "package_id": "pkg",
+        "download_url": "https://example.invalid/download",
+        "size_bytes": 1234,
+    }
+
+    assert _import_one(db, settings, download, str(source_dir))
+
+    assert (
+        tmp_path
+        / "library"
+        / "magazines"
+        / "42"
+        / "2026"
+        / "05"
+        / "Weekly Gazette"
+        / "2026-05-08 - Gazete202620.pdf"
+    ).exists()
+
+
+def test_import_allows_title_acronym_pdf_name(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    source_dir = tmp_path / "Quasarr" / "PlayZone - 2026 05"
+    source_dir.mkdir(parents=True)
+    (source_dir / "PZ526.pdf").write_bytes(b"%PDF-1.4")
+    settings = Settings(library_dir=str(tmp_path / "library"))
+    download = {
+        "id": 1,
+        "magazine_id": 42,
+        "magazine_title": "PlayZone",
+        "issue_key": "2026-05-08",
+        "release_title": "PlayZone No 5 2026 05 08",
+        "package_id": "pkg",
+        "download_url": "https://example.invalid/download",
+        "size_bytes": 1234,
+    }
+
+    assert _import_one(db, settings, download, str(source_dir))
+
+    assert (
+        tmp_path
+        / "library"
+        / "magazines"
+        / "42"
+        / "2026"
+        / "05"
+        / "PlayZone"
+        / "2026-05-08 - PZ526.pdf"
+    ).exists()
 
 
 def test_import_flat_pdf_does_not_delete_import_root(tmp_path):
