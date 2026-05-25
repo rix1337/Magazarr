@@ -329,6 +329,66 @@ def test_manual_skip_package_marks_release_skipped(tmp_path, monkeypatch):
     assert skipped[0]["reason"] == "Skipped manually"
 
 
+def test_dashboard_includes_search_all_button(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    app = create_app(SettingsStore(tmp_path / "settings.json"), db)
+
+    status, headers, body = _wsgi_get(app, "/")
+
+    assert status.startswith("200")
+    assert b'action="/api/magazines/search-all"' in body
+    assert b">Search All</button>" in body
+
+
+def test_search_all_api_starts_automation_job(tmp_path):
+    class FakeAutomation:
+        def start_search_all_job(self):
+            return "job-1"
+
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    app = create_app(
+        SettingsStore(tmp_path / "settings.json"),
+        db,
+        automation=FakeAutomation(),
+    )
+
+    status, headers, body = _wsgi_post(app, "/api/magazines/search-all")
+    payload = json.loads(body)
+
+    assert status.startswith("200")
+    assert payload == {"job_id": "job-1"}
+
+
+def test_search_all_api_runs_without_automation(tmp_path, monkeypatch):
+    import magazarr.web as web
+
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    app = create_app(SettingsStore(tmp_path / "settings.json"), db)
+    monkeypatch.setattr(web, "search_all", lambda db, settings: {"One": 1, "Two": 2})
+
+    status, headers, body = _wsgi_post(app, "/api/magazines/search-all")
+    payload = json.loads(body)
+
+    assert status.startswith("200")
+    assert payload == {"status": "done", "downloads": 3}
+
+
+def test_dashboard_api_returns_magazines(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine One")
+    app = create_app(SettingsStore(tmp_path / "settings.json"), db)
+
+    status, headers, body = _wsgi_get(app, "/api/dashboard")
+    payload = json.loads(body)
+
+    assert status.startswith("200")
+    assert b"Magazine One" in payload["magazines"].encode()
+
+
 def test_skipped_view_returns_errors_before_skipped(tmp_path):
     db = Database(tmp_path / "magazarr.db")
     db.migrate()
