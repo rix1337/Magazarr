@@ -64,6 +64,17 @@ class AutomationService:
         thread.start()
         return job_id
 
+    def start_search_all_job(self) -> str:
+        job_id = self._new_job("Search all")
+        thread = threading.Thread(
+            target=self._run_search_all_job,
+            args=(job_id,),
+            name=f"magazarr-job-{job_id}",
+            daemon=True,
+        )
+        thread.start()
+        return job_id
+
     def job_status(self, job_id: str):
         with self._jobs_lock:
             job = self._jobs.get(job_id)
@@ -126,6 +137,12 @@ class AutomationService:
             if not magazine:
                 raise ValueError("Magazine not found")
             return search_magazine(self.db, self.settings_store.load(), magazine, progress)
+
+        self._run_job(job_id, run)
+
+    def _run_search_all_job(self, job_id: str):
+        def run(progress):
+            return search_all(self.db, self.settings_store.load(), progress)
 
         self._run_job(job_id, run)
 

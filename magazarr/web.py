@@ -13,7 +13,7 @@ from magazarr.importer import import_completed
 from magazarr.notifications import notify_download_started
 from magazarr.opds import handle_opds
 from magazarr.quasarr_client import QuasarrClient
-from magazarr.search import search_magazine
+from magazarr.search import search_all, search_magazine
 from magazarr.settings import SettingsStore
 from magazarr.utils import pdf_mime
 from magazarr.version import __version__
@@ -83,6 +83,14 @@ def create_app(settings_store: SettingsStore, db, automation=None):
         settings = settings_store.load()
         downloads = search_magazine(db, settings, db.magazine_by_id(magazine_id))
         return json_response({"status": "done", "downloads": len(downloads)})
+
+    @app.post("/api/magazines/search-all")
+    def start_search_all():
+        if automation:
+            return json_response({"job_id": automation.start_search_all_job()})
+        settings = settings_store.load()
+        summary = search_all(db, settings)
+        return json_response({"status": "done", "downloads": sum(summary.values())})
 
     @app.get("/api/jobs/<job_id>")
     def job_status(job_id):
@@ -178,7 +186,9 @@ def create_app(settings_store: SettingsStore, db, automation=None):
             {
                 "magazines": magazine_rows(
                     db.magazines(),
-                    db.blacklist_by_magazine(),
+                    db.blacklist_terms_by_magazine()
+                    if hasattr(db, "blacklist_terms_by_magazine")
+                    else {},
                     db,
                     active_download_counts(db, settings),
                 )
@@ -337,6 +347,9 @@ def dashboard(settings, db) -> str:
             <form class="inline" method="post" action="/magazines">
               <input name="title" placeholder="Magazine title" required>
               <button type="submit">Add</button>
+            </form>
+            <form class="inline js-job-form" method="post" action="/api/magazines/search-all">
+              <button type="submit">Search All</button>
             </form>
           </div>
         </div>
@@ -859,7 +872,7 @@ def page_script() -> str:
     if (button) button.disabled = true;
     jobModal?.showModal();
     jobPanel.hidden = false;
-    jobTitle.textContent = "Search";
+    jobTitle.textContent = button?.textContent?.trim() || "Search";
     jobStatus.textContent = "Starting...";
     jobResults.replaceChildren();
     try {
@@ -867,6 +880,7 @@ def page_script() -> str:
       const data = await res.json();
       if (!data.job_id) {
         jobStatus.textContent = "Done";
+        if (button) button.disabled = false;
         await refreshDashboard();
         await loadDownloads();
         return;
@@ -893,7 +907,7 @@ def page_script() -> str:
         row.className = "job-event";
         row.innerHTML = `<span>${esc(item.event)}</span><span>${esc(item.message)}</span>`;
         jobResults.append(row);
-        jobResults.scrollTop = jobResults.scrollHeight;
+        scrollJobToBottom();
       }
       if (["done", "error"].includes(job.status)) {
         if (button) button.disabled = false;
@@ -903,6 +917,13 @@ def page_script() -> str:
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
+  }
+
+  function scrollJobToBottom() {
+    requestAnimationFrame(() => {
+      jobPanel.scrollTop = jobPanel.scrollHeight;
+      jobModal.scrollTop = jobModal.scrollHeight;
+    });
   }
 
   const baseLimit = 25;
