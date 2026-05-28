@@ -15,7 +15,7 @@ from magazarr.opds import handle_opds
 from magazarr.quasarr_client import QuasarrClient
 from magazarr.search import search_all, search_magazine
 from magazarr.settings import SettingsStore
-from magazarr.utils import pdf_mime
+from magazarr.utils import clean_release_title, pdf_mime
 from magazarr.version import __version__
 
 
@@ -564,6 +564,7 @@ def magazine_modal() -> str:
       <div class="pager">
         <button type="button" class="secondary" id="magazine-modal-prev">Prev</button>
         <span id="magazine-modal-page"></span>
+        <select id="magazine-modal-jump" hidden></select>
         <button type="button" class="secondary" id="magazine-modal-next">Next</button>
       </div>
     </dialog>
@@ -634,7 +635,7 @@ def issue_payload(row):
         "id": row["id"],
         "magazine_title": row["magazine_title"],
         "issue_key": row["issue_key"],
-        "release_title": row["release_title"],
+        "release_title": clean_release_title(row["release_title"]),
         "file_path": row["file_path"],
         "cover_url": f"/opds?cmd=Cover&issueid={row['id']}",
         "view_url": f"/issues/{row['id']}/view",
@@ -952,6 +953,7 @@ def page_script() -> str:
   const magazineModalPage = document.getElementById("magazine-modal-page");
   const magazineModalPrev = document.getElementById("magazine-modal-prev");
   const magazineModalNext = document.getElementById("magazine-modal-next");
+  const magazineModalJump = document.getElementById("magazine-modal-jump");
   const magazineModalClear = document.getElementById("magazine-modal-clear");
   const magazineModalDeleteErrors = document.getElementById("magazine-modal-delete-errors");
   let activeMagazine = { id: 0, kind: "", label: "", title: "", offset: 0 };
@@ -1144,6 +1146,7 @@ def page_script() -> str:
       }
       magazineModal?.showModal();
       loadMagazineItems(0);
+      loadJumpPicker();
   });
 
   magazineModalSearch?.addEventListener("input", () => loadMagazineItems(0));
@@ -1155,6 +1158,27 @@ def page_script() -> str:
     const limit = activeMagazine.kind === "downloaded" ? 1 : baseLimit;
     loadMagazineItems(activeMagazine.offset + limit);
   });
+  magazineModalJump?.addEventListener("change", () => {
+    const offset = parseInt(magazineModalJump.value, 10);
+    if (!isNaN(offset)) loadMagazineItems(offset);
+  });
+
+  async function loadJumpPicker() {
+    if (activeMagazine.kind !== "downloaded") {
+      magazineModalJump.hidden = true;
+      return;
+    }
+    const res = await fetch(`/api/magazines/${activeMagazine.id}/items/downloaded?limit=1000&offset=0`);
+    const data = await res.json();
+    magazineModalJump.innerHTML = '<option value="">Jump to…</option>';
+    data.rows.forEach((item, idx) => {
+      const opt = document.createElement("option");
+      opt.value = idx;
+      opt.textContent = item.issue_key || item.release_title;
+      magazineModalJump.append(opt);
+    });
+    magazineModalJump.hidden = data.rows.length <= 1;
+  }
   loadDownloads();
   setInterval(() => {
     refreshDashboard();

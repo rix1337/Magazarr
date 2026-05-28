@@ -12,7 +12,7 @@ from bottle import HTTPError, request, response, static_file
 
 from magazarr.cover import COVER_MIME, CoverError, extract_pdf_cover
 from magazarr.settings import Settings
-from magazarr.utils import pdf_mime
+from magazarr.utils import clean_release_title, pdf_mime
 
 NS = "http://www.w3.org/2005/Atom"
 OPDS = "http://opds-spec.org/2010/catalog"
@@ -201,7 +201,7 @@ def nav_entry(title: str, entry_id: str, href: str, content: str):
 
 def issue_entry(issue):
     title = f"{issue['magazine_title']} ({issue['issue_key']})"
-    entry = _entry(title, f"issue:{issue['id']}", issue["release_title"])
+    entry = _entry(title, f"issue:{issue['id']}", clean_release_title(issue["release_title"]))
     issue_id = quote_plus(str(issue["id"]))
     ElementTree.SubElement(
         entry,

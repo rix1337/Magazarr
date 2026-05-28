@@ -260,6 +260,11 @@ def pdf_mime(path: str) -> str:
     return mimetypes.guess_type(path)[0] or "application/pdf"
 
 
+def clean_release_title(title: str) -> str:
+    """Strip internal suffixes like -retry-2 that must not be shown in UI or OPDS."""
+    return re.sub(r"-retry-\d+$", "", str(title or ""), flags=re.IGNORECASE).strip()
+
+
 def is_relative_to(path: Path, root: Path) -> bool:
     try:
         path.resolve().relative_to(root.resolve())
