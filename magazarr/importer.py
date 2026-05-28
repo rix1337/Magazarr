@@ -35,7 +35,9 @@ GENERIC_PDF_NAME_TOKENS = {
 def import_completed(db, settings: Settings) -> list[str]:
     client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
     history = client.history()
-    history_by_id = {str(item.get("nzo_id")): item for item in history if item.get("nzo_id")}
+    history_by_id = {
+        str(item.get("nzo_id")): item for item in history if item.get("nzo_id")
+    }
     history_by_name = _history_by_name(history)
 
     imported = []
@@ -55,18 +57,24 @@ def import_completed(db, settings: Settings) -> list[str]:
                 f"Download failed: {item.get('fail_message') or item.get('name')}",
                 download,
             )
-            _delete_finished_package(db, client, download, item, "Failed package cleanup")
+            _delete_finished_package(
+                db, client, download, item, "Failed package cleanup"
+            )
             continue
         if _history_status(item) != "completed":
             continue
         storage = str(item.get("storage") or "").strip()
         db.update_download_storage(download["id"], storage, "completed")
         if _import_one(db, settings, download, storage):
-            _delete_finished_package(db, client, download, item, "Imported package cleanup")
+            _delete_finished_package(
+                db, client, download, item, "Imported package cleanup"
+            )
             imported.append(download["release_title"])
         else:
             db.update_download_storage(download["id"], storage, "import_error")
-            _delete_finished_package(db, client, download, item, "Failed import cleanup")
+            _delete_finished_package(
+                db, client, download, item, "Failed import cleanup"
+            )
     return imported
 
 
@@ -94,7 +102,9 @@ def _history_status(item: dict) -> str:
     return str(item.get("status") or "").strip().lower()
 
 
-def _delete_finished_package(db, client: QuasarrClient, download, item: dict, label: str):
+def _delete_finished_package(
+    db, client: QuasarrClient, download, item: dict, label: str
+):
     package_id = str(item.get("nzo_id") or download["package_id"] or "").strip()
     if not package_id:
         return
@@ -124,7 +134,9 @@ def _delete_finished_package(db, client: QuasarrClient, download, item: dict, la
 def _import_one(db, settings: Settings, download, storage: str) -> bool:
     storage = str(storage or "").strip()
     if not storage:
-        _import_error(db, settings, "Storage path missing from Quasarr history", download)
+        _import_error(
+            db, settings, "Storage path missing from Quasarr history", download
+        )
         return False
 
     source = Path(storage).expanduser()
@@ -133,7 +145,9 @@ def _import_one(db, settings: Settings, download, storage: str) -> bool:
         _import_error(db, settings, f"Storage path not found: {source}", download)
         return False
     if source.is_dir() and _is_filesystem_root(source):
-        _import_error(db, settings, f"Refusing to import from filesystem root: {source}", download)
+        _import_error(
+            db, settings, f"Refusing to import from filesystem root: {source}", download
+        )
         return False
 
     pdf = _source_pdf(source)
@@ -188,9 +202,9 @@ def _library_destination(settings: Settings, download, pdf: Path) -> Path:
         _download_value(download, "release_title"),
     )
     title = safe_filename(download["magazine_title"])
-    filename = safe_filename(
-        f"{download['issue_key']} - {pdf.stem}"
-    ) + pdf.suffix.lower()
+    filename = (
+        safe_filename(f"{download['issue_key']} - {pdf.stem}") + pdf.suffix.lower()
+    )
     return (
         Path(settings.library_dir).expanduser()
         / "magazines"
@@ -310,7 +324,11 @@ def _fuzzy_title_token_matches(magazine_title: str, filename: str) -> bool:
         for match in re.finditer(r"[a-z]+", word)
     ]
     abbreviations = _title_abbreviations(magazine_title)
-    if any(found_word.startswith(abbr) for abbr in abbreviations for found_word in available):
+    if any(
+        found_word.startswith(abbr)
+        for abbr in abbreviations
+        for found_word in available
+    ):
         return True
     return any(
         _near_match(wanted_word, found_word)

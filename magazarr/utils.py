@@ -11,29 +11,42 @@ from pathlib import Path
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 MONTHS = {
     "jan": 1,
+    "januar": 1,
+    "janner": 1,  # Jänner (Austrian German)
     "january": 1,
     "feb": 2,
+    "februar": 2,
     "february": 2,
     "mar": 3,
     "march": 3,
+    "marz": 3,  # März after NFKD→ASCII stripping
+    "maerz": 3,  # explicit ae spelling
+    "mrz": 3,  # German abbreviation Mrz.
     "apr": 4,
     "april": 4,
+    "mai": 5,
     "may": 5,
     "jun": 6,
     "june": 6,
+    "juni": 6,
     "jul": 7,
     "july": 7,
+    "juli": 7,
     "aug": 8,
     "august": 8,
     "sep": 9,
     "sept": 9,
     "september": 9,
     "oct": 10,
+    "okt": 10,
     "october": 10,
+    "oktober": 10,
     "nov": 11,
     "november": 11,
     "dec": 12,
+    "dez": 12,
     "december": 12,
+    "dezember": 12,
 }
 
 
@@ -112,7 +125,9 @@ def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
             if value:
                 return IssueDate(value.isoformat(), value)
 
-    match = re.search(r"\b([0-2]?\d|3[01])[ ._-](0?[1-9]|1[0-2])[ ._-](20\d{2})\b", clean)
+    match = re.search(
+        r"\b([0-2]?\d|3[01])[ ._-](0?[1-9]|1[0-2])[ ._-](20\d{2})\b", clean
+    )
     if match:
         value = _date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
         if value:
@@ -136,7 +151,9 @@ def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
             if value:
                 return IssueDate(value.isoformat(), value)
 
-    match = re.search(r"\b(?:issue|iss|no|nr|number)\s*(\d{1,4})(?:\s*(20\d{2}))?\b", clean)
+    match = re.search(
+        r"\b(?:issue|iss|no|nr|number)\s*(\d{1,4})(?:\s*(20\d{2}))?\b", clean
+    )
     if match:
         number = int(match.group(1))
         year = match.group(2)
@@ -229,8 +246,6 @@ def pub_date_within_past_days(pub_date: str, days: int) -> bool | None:
         return None
     cutoff = date.today() - timedelta(days=days)
     return parsed.date() >= cutoff
-
-
 
 
 def safe_filename(value: str) -> str:

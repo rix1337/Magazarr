@@ -12,9 +12,17 @@ jobs:
   quality-check:
     name: Check
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      changes_pushed: ${{ steps.checks.outputs.changes_pushed }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -23,6 +31,12 @@ jobs:
         with:
           enable-cache: true
       - name: Run checks
+        id: checks
+        env:
+          TARGET_REF: ${{ github.head_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           uv sync --group dev
           uv run pre-commit.py --ci
@@ -32,6 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     needs: quality-check
+    if: needs.quality-check.outputs.changes_pushed != 'true'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6

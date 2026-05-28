@@ -136,7 +136,9 @@ class AutomationService:
             magazine = self.db.magazine_by_id(magazine_id)
             if not magazine:
                 raise ValueError("Magazine not found")
-            return search_magazine(self.db, self.settings_store.load(), magazine, progress)
+            return search_magazine(
+                self.db, self.settings_store.load(), magazine, progress
+            )
 
         self._run_job(job_id, run)
 
@@ -211,7 +213,9 @@ class AutomationService:
             settings = self.settings_store.load()
             summary = search_all(self.db, settings)
             imported = self._run_import_check_locked(settings)
-        logger.info(f"Automation complete: searched={summary}, imported={len(imported)}")
+        logger.info(
+            f"Automation complete: searched={summary}, imported={len(imported)}"
+        )
         return summary, imported
 
     def run_import_check(self):

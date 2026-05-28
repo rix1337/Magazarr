@@ -40,6 +40,9 @@ def extract_pdf_cover(pdf_path: Path) -> Path:
 
 def _is_fresh(cover_path: Path, pdf_path: Path) -> bool:
     try:
-        return cover_path.exists() and cover_path.stat().st_mtime >= pdf_path.stat().st_mtime
+        return (
+            cover_path.exists()
+            and cover_path.stat().st_mtime >= pdf_path.stat().st_mtime
+        )
     except OSError:
         return False

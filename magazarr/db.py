@@ -163,7 +163,9 @@ class Database:
             clauses.append("m.id=?")
             params.append(magazine_id)
         if search:
-            clauses.append("(i.release_title LIKE ? OR i.issue_key LIKE ? OR m.title LIKE ?)")
+            clauses.append(
+                "(i.release_title LIKE ? OR i.issue_key LIKE ? OR m.title LIKE ?)"
+            )
             needle = f"%{search}%"
             params.extend([needle, needle, needle])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -186,7 +188,9 @@ class Database:
             clauses.append("m.id=?")
             params.append(magazine_id)
         if search:
-            clauses.append("(i.release_title LIKE ? OR i.issue_key LIKE ? OR m.title LIKE ?)")
+            clauses.append(
+                "(i.release_title LIKE ? OR i.issue_key LIKE ? OR m.title LIKE ?)"
+            )
             needle = f"%{search}%"
             params.extend([needle, needle, needle])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -566,7 +570,9 @@ class Database:
                 ),
             )
 
-    def has_skipped_release(self, magazine_id: int, release_title: str, download_url: str) -> bool:
+    def has_skipped_release(
+        self, magazine_id: int, release_title: str, download_url: str
+    ) -> bool:
         with self.connect() as conn:
             row = conn.execute(
                 """
@@ -611,7 +617,9 @@ class Database:
             where += " AND s.magazine_id=?"
             params.append(magazine_id)
         if search:
-            where += " AND (s.release_title LIKE ? OR m.title LIKE ? OR s.reason LIKE ?)"
+            where += (
+                " AND (s.release_title LIKE ? OR m.title LIKE ? OR s.reason LIKE ?)"
+            )
             needle = f"%{search}%"
             params.extend([needle, needle, needle])
         params.extend([limit, offset])
@@ -635,7 +643,9 @@ class Database:
             where += " AND s.magazine_id=?"
             params.append(magazine_id)
         if search:
-            where += " AND (s.release_title LIKE ? OR m.title LIKE ? OR s.reason LIKE ?)"
+            where += (
+                " AND (s.release_title LIKE ? OR m.title LIKE ? OR s.reason LIKE ?)"
+            )
             needle = f"%{search}%"
             params.extend([needle, needle, needle])
         with self.connect() as conn:

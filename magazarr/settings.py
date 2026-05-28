@@ -64,9 +64,7 @@ class SettingsStore:
             str(form.get("quasarr_external_url", "")).strip().rstrip("/")
         )
         settings.quasarr_api_key = str(form.get("quasarr_api_key", "")).strip()
-        settings.discord_webhook_url = str(
-            form.get("discord_webhook_url", "")
-        ).strip()
+        settings.discord_webhook_url = str(form.get("discord_webhook_url", "")).strip()
         settings.quasarr_search_category = str(
             form.get("quasarr_search_category", "7000")
         ).strip()

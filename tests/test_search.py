@@ -182,7 +182,10 @@ def test_search_progress_does_not_emit_raw_found_events(monkeypatch):
 
     assert downloads == []
     assert "found" not in [event["event"] for event in events]
-    assert any(event["event"] == "skipped" and event["reason"] == "title_mismatch" for event in events)
+    assert any(
+        event["event"] == "skipped" and event["reason"] == "title_mismatch"
+        for event in events
+    )
 
 
 def test_search_does_not_add_url_for_active_duplicate_release(monkeypatch):
@@ -241,10 +244,15 @@ def test_search_does_not_add_url_for_active_duplicate_release(monkeypatch):
 
     assert downloads == []
     assert add_url_calls == []
-    assert any(event["event"] == "skipped" and event["reason"] == "duplicate" for event in events)
+    assert any(
+        event["event"] == "skipped" and event["reason"] == "duplicate"
+        for event in events
+    )
 
 
-def test_search_retries_issue_after_import_error_with_new_release(tmp_path, monkeypatch):
+def test_search_retries_issue_after_import_error_with_new_release(
+    tmp_path, monkeypatch
+):
     add_url_calls = []
 
     class FakeClient:
@@ -496,7 +504,9 @@ def test_numbered_release_is_duplicate_when_existing_title_has_same_number():
         "Magazine Title No 18 2026",
         "Magazine Title No 20 2026",
     ]
-    assert db.skipped == [(7, "Magazine Title No 19 2026", "duplicate", "2026-issue-0019")]
+    assert db.skipped == [
+        (7, "Magazine Title No 19 2026", "duplicate", "2026-issue-0019")
+    ]
 
 
 def test_dedupe_candidates_keeps_distinct_issues_with_same_pub_date():
