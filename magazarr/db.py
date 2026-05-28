@@ -91,20 +91,31 @@ class Database:
                 );
                 """
             )
-        self._migrate_clean_release_titles()
+        self._migrate_clean_retry_suffixes()
 
-    def _migrate_clean_release_titles(self):
+    def _migrate_clean_retry_suffixes(self):
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT id, release_title FROM issues WHERE release_title LIKE '%-retry-%'"
+                """SELECT id, magazine_id, issue_key, release_title
+                   FROM issues WHERE issue_key LIKE '%-retry-%'
+                      OR release_title LIKE '%-retry-%'"""
             ).fetchall()
             for row in rows:
-                clean = clean_release_title(row["release_title"])
-                if clean != row["release_title"]:
-                    conn.execute(
-                        "UPDATE issues SET release_title = ? WHERE id = ?",
-                        (clean, row["id"]),
-                    )
+                clean_key = clean_release_title(row["issue_key"])
+                clean_title = clean_release_title(row["release_title"])
+                # If clean issue_key already exists for this magazine, drop the retry duplicate
+                if clean_key != row["issue_key"]:
+                    exists = conn.execute(
+                        "SELECT id FROM issues WHERE magazine_id=? AND issue_key=? AND id!=?",
+                        (row["magazine_id"], clean_key, row["id"]),
+                    ).fetchone()
+                    if exists:
+                        conn.execute("DELETE FROM issues WHERE id=?", (row["id"],))
+                        continue
+                conn.execute(
+                    "UPDATE issues SET issue_key=?, release_title=? WHERE id=?",
+                    (clean_key, clean_title, row["id"]),
+                )
 
     def add_magazine(self, title: str):
         clean = " ".join(title.split())

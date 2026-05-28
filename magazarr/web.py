@@ -634,7 +634,7 @@ def issue_payload(row):
     return {
         "id": row["id"],
         "magazine_title": row["magazine_title"],
-        "issue_key": row["issue_key"],
+        "issue_key": clean_release_title(row["issue_key"]),
         "release_title": clean_release_title(row["release_title"]),
         "file_path": row["file_path"],
         "cover_url": f"/opds?cmd=Cover&issueid={row['id']}",
