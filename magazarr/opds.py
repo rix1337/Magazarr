@@ -201,7 +201,9 @@ def nav_entry(title: str, entry_id: str, href: str, content: str):
 
 def issue_entry(issue):
     title = f"{issue['magazine_title']} ({issue['issue_key']})"
-    entry = _entry(title, f"issue:{issue['id']}", clean_release_title(issue["release_title"]))
+    entry = _entry(
+        title, f"issue:{issue['id']}", clean_release_title(issue["release_title"])
+    )
     issue_id = quote_plus(str(issue["id"]))
     ElementTree.SubElement(
         entry,

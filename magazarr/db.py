@@ -3,6 +3,8 @@
 import sqlite3
 from pathlib import Path
 
+from magazarr.utils import clean_release_title
+
 
 class Database:
     def __init__(self, path: Path):
@@ -89,6 +91,20 @@ class Database:
                 );
                 """
             )
+        self._migrate_clean_release_titles()
+
+    def _migrate_clean_release_titles(self):
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id, release_title FROM issues WHERE release_title LIKE '%-retry-%'"
+            ).fetchall()
+            for row in rows:
+                clean = clean_release_title(row["release_title"])
+                if clean != row["release_title"]:
+                    conn.execute(
+                        "UPDATE issues SET release_title = ? WHERE id = ?",
+                        (clean, row["id"]),
+                    )
 
     def add_magazine(self, title: str):
         clean = " ".join(title.split())
