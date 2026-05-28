@@ -46,7 +46,10 @@ def test_search_fetches_all_pages():
             offset = params["offset"]
             titles = {
                 0: ["Magazine Title Three May 2026", "Magazine Title Three April 2026"],
-                2: ["Magazine Title Three March 2026", "Magazine Title Three February 2026"],
+                2: [
+                    "Magazine Title Three March 2026",
+                    "Magazine Title Three February 2026",
+                ],
                 4: ["Magazine Title Three January 2026"],
             }[offset]
             return Response(_xml(titles))
@@ -79,4 +82,6 @@ def _xml(titles):
         """
         for idx, title in enumerate(titles)
     )
-    return f"<?xml version=\"1.0\" encoding=\"UTF-8\"?><rss><channel>{items}</channel></rss>"
+    return (
+        f'<?xml version="1.0" encoding="UTF-8"?><rss><channel>{items}</channel></rss>'
+    )

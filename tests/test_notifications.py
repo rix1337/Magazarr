@@ -36,7 +36,9 @@ def test_download_started_is_silent_discord_message(monkeypatch):
     monkeypatch.setattr("magazarr.notifications.requests.post", fake_post)
     settings = Settings(discord_webhook_url="https://discord.example.test/webhook")
 
-    assert notify_download_started(settings, "Magazine Title", "Magazine Title 2026 04 30", "pkg")
+    assert notify_download_started(
+        settings, "Magazine Title", "Magazine Title 2026 04 30", "pkg"
+    )
 
     _args, kwargs = calls[0]
     payload = json.loads(kwargs["data"])

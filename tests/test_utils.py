@@ -17,19 +17,27 @@ def test_search_term_matches_lazylibrarian_style_cleanup():
 
 def test_title_match_uses_tokens_not_substrings():
     assert magazine_title_matches("Example Monthly USA", "Example Monthly USA May 2026")
-    assert not magazine_title_matches("Example Monthly", "Example Monthlyum PC May 2026")
-    assert not magazine_title_matches("Magazine Title", "Unrelated Book - Example Author")
+    assert not magazine_title_matches(
+        "Example Monthly", "Example Monthlyum PC May 2026"
+    )
+    assert not magazine_title_matches(
+        "Magazine Title", "Unrelated Book - Example Author"
+    )
     assert magazine_title_matches("Magazine Title", "Magazine Title No 19 2026")
     assert not magazine_title_matches(
         "Magazine Title",
         "Unrelated Book - Example Author",
     )
-    assert not magazine_title_matches("Magazine Title", "Unrelated Title - Magazine Title")
+    assert not magazine_title_matches(
+        "Magazine Title", "Unrelated Title - Magazine Title"
+    )
 
 
 def test_blacklist_term_uses_token_sequence():
     assert token_sequence_matches("Magazine Title Photo", "Magazine Title Photo 2026")
-    assert not token_sequence_matches("Magazine Title Photo", "Magazine Title Special Photo Issue")
+    assert not token_sequence_matches(
+        "Magazine Title Photo", "Magazine Title Special Photo Issue"
+    )
 
 
 def test_parse_month_year_issue_date():
@@ -95,6 +103,37 @@ def test_issue_number_release_aliases_numeric_month_year():
 
 def test_day_level_date_aliases_do_not_add_month_alias():
     assert "2026-04-01" not in issue_aliases("Weekly Title 2026 04 30")
+
+
+def test_parse_german_month_full_names():
+    assert parse_issue_date("Magazin Januar 2026").key == "2026-01-01"
+    assert parse_issue_date("Magazin Februar 2026").key == "2026-02-01"
+    assert parse_issue_date("Magazin März 2026").key == "2026-03-01"
+    assert parse_issue_date("Magazin Maerz 2026").key == "2026-03-01"
+    assert parse_issue_date("Magazin Mai 2026").key == "2026-05-01"
+    assert parse_issue_date("Magazin Juni 2026").key == "2026-06-01"
+    assert parse_issue_date("Magazin Juli 2026").key == "2026-07-01"
+    assert parse_issue_date("Magazin Oktober 2026").key == "2026-10-01"
+    assert parse_issue_date("Magazin Dezember 2026").key == "2026-12-01"
+
+
+def test_parse_german_month_abbreviations():
+    assert parse_issue_date("Magazin Mrz 2026").key == "2026-03-01"
+    assert parse_issue_date("Magazin Okt 2026").key == "2026-10-01"
+    assert parse_issue_date("Magazin Dez 2026").key == "2026-12-01"
+
+
+def test_german_month_duplicate_check_aliases_match_english():
+    assert issue_aliases("Der Spiegel Mai 2026") & issue_aliases("Der Spiegel May 2026")
+    assert issue_aliases("Der Spiegel Juni 2026") & issue_aliases(
+        "Der Spiegel June 2026"
+    )
+    assert issue_aliases("Der Spiegel Juli 2026") & issue_aliases(
+        "Der Spiegel July 2026"
+    )
+    assert issue_aliases("Der Spiegel Oktober 2026") & issue_aliases(
+        "Der Spiegel October 2026"
+    )
 
 
 def test_within_past_days_uses_issue_date():

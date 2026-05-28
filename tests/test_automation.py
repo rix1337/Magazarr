@@ -33,4 +33,7 @@ def test_skipped_progress_message_includes_reason():
         }
     )
 
-    assert message == "Magazine Title: Magazine Title Photo 2026 - blacklisted: Magazine Title Photo"
+    assert (
+        message
+        == "Magazine Title: Magazine Title Photo 2026 - blacklisted: Magazine Title Photo"
+    )

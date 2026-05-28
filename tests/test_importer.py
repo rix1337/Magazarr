@@ -318,7 +318,7 @@ def test_library_destination_is_nested_and_filesystem_safe(tmp_path):
     settings = Settings(library_dir=str(tmp_path / "library"))
     download = {
         "magazine_id": 42,
-        "magazine_title": 'Magazine Title: Wissen/Plus?',
+        "magazine_title": "Magazine Title: Wissen/Plus?",
         "issue_key": "2026-04-02",
     }
 

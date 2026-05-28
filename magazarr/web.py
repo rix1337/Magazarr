@@ -79,7 +79,9 @@ def create_app(settings_store: SettingsStore, db, automation=None):
         if not db.magazine_by_id(magazine_id):
             raise HTTPError(404, "Magazine not found")
         if automation:
-            return json_response({"job_id": automation.start_search_magazine_job(magazine_id)})
+            return json_response(
+                {"job_id": automation.start_search_magazine_job(magazine_id)}
+            )
         settings = settings_store.load()
         downloads = search_magazine(db, settings, db.magazine_by_id(magazine_id))
         return json_response({"status": "done", "downloads": len(downloads)})
@@ -234,7 +236,9 @@ def create_app(settings_store: SettingsStore, db, automation=None):
     def issue_file(issue_id):
         issue = _issue_or_404(db, issue_id)
         path = _issue_path_or_404(issue)
-        result = static_file(path.name, root=str(path.parent), mimetype=pdf_mime(str(path)))
+        result = static_file(
+            path.name, root=str(path.parent), mimetype=pdf_mime(str(path))
+        )
         result.set_header(
             "Content-Disposition",
             f'inline; filename="{_header_filename(path.name)}"',
@@ -369,7 +373,7 @@ def dashboard(settings, db) -> str:
 
 def input_row(label: str, name: str, value: str, input_type: str = "text") -> str:
     return (
-        f'<label><span>{html.escape(label)}</span>'
+        f"<label><span>{html.escape(label)}</span>"
         f'<input type="{input_type}" name="{name}" value="{html.escape(value or "")}"></label>'
     )
 
@@ -388,11 +392,11 @@ def magazine_rows(magazines, blacklist, db, downloading_counts=None) -> str:
             <article class="mag-card">
               <div class="mag-cover-block">
                 <button class="cover-button" type="button" data-open-mag-items
-                  data-kind="downloaded" data-magazine-id="{mag['id']}"
-                  data-title="Downloaded" data-magazine-title="{html.escape(mag['title'])}"
-                  aria-label="Downloaded {mag['issue_count']}">
+                  data-kind="downloaded" data-magazine-id="{mag["id"]}"
+                  data-title="Downloaded" data-magazine-title="{html.escape(mag["title"])}"
+                  aria-label="Downloaded {mag["issue_count"]}">
                   <span class="mag-cover">{magazine_cover(mag)}</span>
-                  <span class="downloaded-entry"><span class="downloaded-label">Downloaded</span><strong>{mag['issue_count']}</strong></span>
+                  <span class="downloaded-entry"><span class="downloaded-label">Downloaded</span><strong>{mag["issue_count"]}</strong></span>
                 </button>
               </div>
               <div class="mag-main">
@@ -400,7 +404,7 @@ def magazine_rows(magazines, blacklist, db, downloading_counts=None) -> str:
                   <h3>{html.escape(mag["title"])}</h3>
                 </div>
                 <div class="chips">{blacklist_chips(blacklisted_terms)}</div>
-                <form class="chip-form" method="post" action="/magazines/{mag['id']}/blacklist">
+                <form class="chip-form" method="post" action="/magazines/{mag["id"]}/blacklist">
                   <input name="term" placeholder="Blacklist term">
                   <button type="submit">Add</button>
                 </form>
@@ -409,11 +413,11 @@ def magazine_rows(magazines, blacklist, db, downloading_counts=None) -> str:
                   {mag_stat_button("Skipped / Errors", skipped_and_errors, mag["id"], "skipped", mag["title"])}
                 </div>
                 <div class="card-actions">
-                  <form class="js-job-form" method="post" action="/api/magazines/{mag['id']}/search"><button>Search</button></form>
-                  <form method="post" action="/magazines/{mag['id']}/active">
-                    <button class="secondary active-toggle {'is-active' if mag['active'] else 'is-inactive'}" type="submit" name="active" value="{'' if mag['active'] else 'on'}">{'Disable' if mag['active'] else 'Enable'}</button>
+                  <form class="js-job-form" method="post" action="/api/magazines/{mag["id"]}/search"><button>Search</button></form>
+                  <form method="post" action="/magazines/{mag["id"]}/active">
+                    <button class="secondary active-toggle {"is-active" if mag["active"] else "is-inactive"}" type="submit" name="active" value="{"" if mag["active"] else "on"}">{"Disable" if mag["active"] else "Enable"}</button>
                   </form>
-                  <form method="post" action="/magazines/{mag['id']}/delete" data-confirm="Delete this magazine and all local records?"><button class="secondary">Delete</button></form>
+                  <form method="post" action="/magazines/{mag["id"]}/delete" data-confirm="Delete this magazine and all local records?"><button class="secondary">Delete</button></form>
                 </div>
               </div>
             </article>
@@ -472,7 +476,7 @@ def mag_stat_button(
         f'<button class="stat" type="button" data-open-mag-items '
         f'data-kind="{kind}" data-magazine-id="{magazine_id}" '
         f'data-title="{html.escape(label)}" data-magazine-title="{html.escape(title)}">'
-        f'<span>{html.escape(label)}</span><strong>{count}</strong></button>'
+        f"<span>{html.escape(label)}</span><strong>{count}</strong></button>"
     )
 
 
@@ -481,7 +485,7 @@ def blacklist_chips(terms) -> str:
     for term in terms:
         chips.append(
             f"""
-            <form class="chip" method="post" action="/blacklist/{term['id']}/delete">
+            <form class="chip" method="post" action="/blacklist/{term["id"]}/delete">
               <span>{html.escape(term["term"])}</span>
               <button type="submit" title="Remove blacklist term">x</button>
             </form>
@@ -716,7 +720,11 @@ def download_status_payload(db, settings, magazine_id: int | None = None):
         queue, history = fetch_quasarr_downloads(settings)
         sync_download_errors(db, settings, downloads, queue, history)
     except Exception as exc:
-        return {"active": [], "error": str(exc), "quasarr_url": quasarr_public_url(settings)}
+        return {
+            "active": [],
+            "error": str(exc),
+            "quasarr_url": quasarr_public_url(settings),
+        }
 
     active = []
     for item in [*queue, *history]:
@@ -802,7 +810,13 @@ def _download_title_key(value) -> str:
 def download_card_payload(settings, item, download):
     package_id = str(item.get("nzo_id") or "")
     title = str(item.get("filename") or item.get("name") or download["release_title"])
-    for prefix in ("[Downloading] ", "[Extracting] ", "[Paused] ", "[Linkgrabber] ", "[CAPTCHA not solved!] "):
+    for prefix in (
+        "[Downloading] ",
+        "[Extracting] ",
+        "[Paused] ",
+        "[Linkgrabber] ",
+        "[CAPTCHA not solved!] ",
+    ):
         title = title.replace(prefix, "")
     return {
         "id": download["id"],
@@ -1159,7 +1173,9 @@ def _unskip_release(db, settings, skip_id: int):
     if not skipped:
         return None
     client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
-    package_ids = client.add_url(skipped["download_url"], settings.quasarr_download_category)
+    package_ids = client.add_url(
+        skipped["download_url"], settings.quasarr_download_category
+    )
     package_id = package_ids[0] if package_ids else None
     issue_key = db.record_manual_download(
         skipped["magazine_id"],
@@ -1213,11 +1229,11 @@ def issue_viewer_page(issue) -> str:
           <h1>{html.escape(title)}</h1>
           <div class="muted">{html.escape(issue["release_title"])}</div>
         </div>
-        <a class="button-link secondary" href="/issues/{issue['id']}/file" target="_blank" rel="noreferrer">Open PDF</a>
+        <a class="button-link secondary" href="/issues/{issue["id"]}/file" target="_blank" rel="noreferrer">Open PDF</a>
       </header>
-      <iframe class="pdf-viewer" src="/issues/{issue['id']}/file" title="{html.escape(title)}"></iframe>
+      <iframe class="pdf-viewer" src="/issues/{issue["id"]}/file" title="{html.escape(title)}"></iframe>
       <p class="viewer-fallback">
-        If PDF preview is unavailable, <a href="/issues/{issue['id']}/file">open the PDF directly</a>.
+        If PDF preview is unavailable, <a href="/issues/{issue["id"]}/file">open the PDF directly</a>.
       </p>
     </section>
     """

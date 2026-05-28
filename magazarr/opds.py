@@ -88,8 +88,16 @@ def root_feed(db):
 
 def recent_feed(db, settings: Settings):
     offset = _offset()
-    entries = [issue_entry(issue) for issue in db.recent_issues(settings.opds_page_size, offset)]
-    return atom("Magazarr OPDS - Recent Magazines", "RecentMags", "/opds?cmd=RecentMags", entries)
+    entries = [
+        issue_entry(issue)
+        for issue in db.recent_issues(settings.opds_page_size, offset)
+    ]
+    return atom(
+        "Magazarr OPDS - Recent Magazines",
+        "RecentMags",
+        "/opds?cmd=RecentMags",
+        entries,
+    )
 
 
 def magazines_feed(db, settings: Settings):
@@ -105,7 +113,9 @@ def magazines_feed(db, settings: Settings):
                 mag["title"],
             )
         )
-    return atom("Magazarr OPDS - Magazines", "Magazines", "/opds?cmd=Magazines", entries)
+    return atom(
+        "Magazarr OPDS - Magazines", "Magazines", "/opds?cmd=Magazines", entries
+    )
 
 
 def magazine_feed(db, settings: Settings, magazine_id: int):
@@ -115,7 +125,9 @@ def magazine_feed(db, settings: Settings, magazine_id: int):
     offset = _offset()
     entries = [
         issue_entry(issue)
-        for issue in db.issues_for_magazine(magazine_id, settings.opds_page_size, offset)
+        for issue in db.issues_for_magazine(
+            magazine_id, settings.opds_page_size, offset
+        )
     ]
     return atom(
         f"Magazarr OPDS - {mag['title']}",
@@ -169,7 +181,9 @@ def atom(title: str, feed_id: str, self_href: str, entries: list[ElementTree.Ele
         _tag("link"),
         {"href": "/opds", "rel": "start", "type": NAV, "title": "Home"},
     )
-    ElementTree.SubElement(feed, _tag("link"), {"href": self_href, "rel": "self", "type": NAV})
+    ElementTree.SubElement(
+        feed, _tag("link"), {"href": self_href, "rel": "self", "type": NAV}
+    )
     for entry in entries:
         feed.append(entry)
     return ElementTree.tostring(feed, encoding="utf-8", xml_declaration=True)
@@ -208,7 +222,9 @@ def issue_entry(issue):
                 "type": COVER_MIME,
             },
         )
-    ElementTree.SubElement(entry, _tag("author")).append(_text("name", issue["magazine_title"]))
+    ElementTree.SubElement(entry, _tag("author")).append(
+        _text("name", issue["magazine_title"])
+    )
     return entry
 
 
@@ -232,7 +248,12 @@ def _tag(name: str) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _offset() -> int:

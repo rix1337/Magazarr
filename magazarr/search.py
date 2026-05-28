@@ -54,7 +54,9 @@ class SequenceProfile:
     anchors: tuple[SequenceAnchor, ...] = ()
 
 
-def search_magazine(db, settings: Settings, magazine, on_progress=None) -> list[Candidate]:
+def search_magazine(
+    db, settings: Settings, magazine, on_progress=None
+) -> list[Candidate]:
     client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
     query = search_term(magazine["title"])
     logger.info(f"Searching {magazine['title']} with query {query}")
@@ -138,7 +140,9 @@ def filter_candidates(
     candidates = []
     min_size = settings.min_size_mb * 1024 * 1024
     max_size = settings.max_size_mb * 1024 * 1024
-    blacklist_terms = db.blacklist_terms(magazine["id"]) if hasattr(db, "blacklist_terms") else []
+    blacklist_terms = (
+        db.blacklist_terms(magazine["id"]) if hasattr(db, "blacklist_terms") else []
+    )
     issue_records = _issue_records(db, magazine["id"])
     profiles = _sequence_profiles(
         magazine["title"],
@@ -152,7 +156,9 @@ def filter_candidates(
     existing_aliases = _existing_aliases(issue_records, profiles, magazine["title"])
 
     for result in results:
-        recent_by_pub_date = pub_date_within_past_days(result.pub_date, settings.past_days)
+        recent_by_pub_date = pub_date_within_past_days(
+            result.pub_date, settings.past_days
+        )
         if recent_by_pub_date is False:
             continue
         blacklisted_by = next(
@@ -189,8 +195,13 @@ def filter_candidates(
         if not within_past_days(issue, result.pub_date, settings.past_days):
             _record_skip(db, magazine, result, "outside_past_days", issue.key)
             continue
-        aliases = _release_aliases(result.title, result.pub_date, issue, profiles, magazine["title"])
-        if _has_issue_key_duplicate(db, magazine["id"], issue.key) or aliases & existing_aliases:
+        aliases = _release_aliases(
+            result.title, result.pub_date, issue, profiles, magazine["title"]
+        )
+        if (
+            _has_issue_key_duplicate(db, magazine["id"], issue.key)
+            or aliases & existing_aliases
+        ):
             _record_skip(db, magazine, result, "duplicate", issue.key)
             _emit_skip(on_progress, magazine, result, "duplicate", issue.key)
             continue
@@ -249,7 +260,9 @@ def _existing_aliases(
         issue = parse_issue_date(title, pub_date) or parse_issue_date(key)
         if issue is None and key:
             issue = IssueDate(str(key), None)
-        aliases.update(_release_aliases(title, pub_date, issue, profiles, magazine_title))
+        aliases.update(
+            _release_aliases(title, pub_date, issue, profiles, magazine_title)
+        )
     return aliases
 
 
@@ -267,7 +280,9 @@ def _release_aliases(
         aliases.discard(f"issue-{number.number:04d}")
         alias_families = _alias_families(family, number.year, issue, profiles)
         for alias_family in alias_families:
-            aliases.add(_sequence_issue_alias(alias_family, f"issue-{number.number:04d}"))
+            aliases.add(
+                _sequence_issue_alias(alias_family, f"issue-{number.number:04d}")
+            )
         if number.year:
             aliases.discard(f"{number.year}-issue-{number.number:04d}")
             for alias_family in alias_families:
@@ -479,7 +494,10 @@ def _cadence_days(anchors: tuple[SequenceAnchor, ...]) -> int | None:
             continue
         pairs.append((number_delta, day_delta))
     for cadence in (7, 14, 28, 30, 31):
-        if pairs and all(abs(day_delta - cadence * number_delta) <= 1 for number_delta, day_delta in pairs):
+        if pairs and all(
+            abs(day_delta - cadence * number_delta) <= 1
+            for number_delta, day_delta in pairs
+        ):
             return cadence
     return None
 
@@ -506,7 +524,9 @@ def _record_skip(db, magazine, result: QuasarrResult, reason: str, issue_key: st
         db.record_skipped_release(magazine["id"], result, reason, issue_key)
 
 
-def _emit_skip(on_progress, magazine, result: QuasarrResult, reason: str, details: str = ""):
+def _emit_skip(
+    on_progress, magazine, result: QuasarrResult, reason: str, details: str = ""
+):
     _emit(
         on_progress,
         "skipped",

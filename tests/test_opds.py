@@ -35,7 +35,9 @@ def test_require_opds_auth_challenges_with_browser_prompt_header():
         require_opds_auth(Settings(opds_auth_enabled=True))
 
     assert exc_info.value.status_code == 401
-    assert exc_info.value.get_header("WWW-Authenticate") == 'Basic realm="Magazarr OPDS"'
+    assert (
+        exc_info.value.get_header("WWW-Authenticate") == 'Basic realm="Magazarr OPDS"'
+    )
 
 
 def test_require_opds_auth_accepts_valid_basic_credentials():
@@ -74,4 +76,6 @@ def test_require_opds_auth_rejects_invalid_authorization(authorization):
         )
 
     assert exc_info.value.status_code == 401
-    assert exc_info.value.get_header("WWW-Authenticate") == 'Basic realm="Magazarr OPDS"'
+    assert (
+        exc_info.value.get_header("WWW-Authenticate") == 'Basic realm="Magazarr OPDS"'
+    )

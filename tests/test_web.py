@@ -41,7 +41,10 @@ def test_missing_quasarr_download_becomes_error_and_skipped(tmp_path, monkeypatc
     errors = db.import_errors(magazine_id=magazine["id"])
     assert errors[0]["status"] == "download_error"
     skipped = db.skipped_releases(magazine_id=magazine["id"])
-    assert skipped[0]["reason"] == "Download disappeared from Quasarr before import completed"
+    assert (
+        skipped[0]["reason"]
+        == "Download disappeared from Quasarr before import completed"
+    )
 
 
 def test_download_status_includes_quasarr_queue_and_history(tmp_path, monkeypatch):
