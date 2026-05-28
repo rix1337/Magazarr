@@ -150,7 +150,7 @@ class Database:
                 SELECT i.*, m.title AS magazine_title
                 FROM issues i
                 JOIN magazines m ON m.id = i.magazine_id
-                ORDER BY i.acquired_at DESC, i.id DESC
+                ORDER BY i.issue_key DESC, i.acquired_at DESC, i.id DESC
                 LIMIT ? OFFSET ?
                 """,
                 (limit, offset),
@@ -202,7 +202,7 @@ class Database:
                 FROM issues i
                 JOIN magazines m ON m.id = i.magazine_id
                 {where}
-                ORDER BY i.acquired_at DESC, i.id DESC
+                ORDER BY i.issue_key DESC, i.acquired_at DESC, i.id DESC
                 LIMIT ? OFFSET ?
                 """,
                 tuple(params),
@@ -216,7 +216,7 @@ class Database:
                 FROM issues i
                 JOIN magazines m ON m.id = i.magazine_id
                 WHERE m.id=?
-                ORDER BY i.issue_key DESC, i.acquired_at DESC
+                ORDER BY i.issue_key ASC, i.acquired_at ASC
                 LIMIT ? OFFSET ?
                 """,
                 (magazine_id, limit, offset),
