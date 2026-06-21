@@ -16,3 +16,4 @@ docker/dist/
 *.sqlite3
 
 .DS_Store
+AGENT_HANDOFF.md

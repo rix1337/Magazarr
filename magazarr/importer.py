@@ -342,9 +342,18 @@ def _title_abbreviations(magazine_title: str) -> set[str]:
     uppercase = "".join(re.findall(r"[A-Z]", magazine_title))
     if len(uppercase) >= 2:
         abbreviations.add(uppercase.casefold())
+    for word in re.findall(r"[A-Za-z]+", magazine_title):
+        parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)", word)
+        if len(parts) >= 2:
+            compact = parts[0][:2] + "".join(part[0] for part in parts[1:])
+            if len(compact) >= 2:
+                abbreviations.add(compact.casefold())
     initials = "".join(word[0] for word in tokens(magazine_title) if word)
     if len(initials) >= 2:
         abbreviations.add(initials)
+    for word in tokens(magazine_title):
+        if 2 <= len(word) <= 4:
+            abbreviations.add(word)
     return abbreviations
 
 

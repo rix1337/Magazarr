@@ -101,7 +101,7 @@ def test_filter_candidates_skips_old_issue_dates_without_ui_noise():
             QuasarrResult(
                 "Magazine Title Three January 2023",
                 "https://example.test/old",
-                "Tue, 05 May 2026 10:00:00 +0000",
+                "Tue, 05 May 2099 10:00:00 +0000",
                 50 * 1024 * 1024,
                 "quasarr",
             )

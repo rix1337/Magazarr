@@ -477,6 +477,70 @@ def test_import_allows_title_acronym_pdf_name(tmp_path):
     ).exists()
 
 
+def test_import_allows_short_lowercase_title_embedded_in_pdf_name(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    source_dir = tmp_path / "Quasarr" / "qx Specials - 2026 05"
+    source_dir.mkdir(parents=True)
+    (source_dir / "prefix-qxSpecialsNr.052026.pdf").write_bytes(b"%PDF-1.4")
+    settings = Settings(library_dir=str(tmp_path / "library"))
+    download = {
+        "id": 1,
+        "magazine_id": 42,
+        "magazine_title": "qx",
+        "issue_key": "2026-05-08",
+        "release_title": "qx Specials - Nr.05 2026",
+        "package_id": "pkg",
+        "download_url": "https://example.invalid/download",
+        "size_bytes": 1234,
+    }
+
+    assert _import_one(db, settings, download, str(source_dir))
+
+    assert (
+        tmp_path
+        / "library"
+        / "magazines"
+        / "42"
+        / "2026"
+        / "05"
+        / "qx"
+        / "2026-05-08 - prefix-qxSpecialsNr.052026.pdf"
+    ).exists()
+
+
+def test_import_allows_camelcase_compact_pdf_name(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    source_dir = tmp_path / "Quasarr" / "GameDesk - 2026 07"
+    source_dir.mkdir(parents=True)
+    (source_dir / "GaD7.26.pdf").write_bytes(b"%PDF-1.4")
+    settings = Settings(library_dir=str(tmp_path / "library"))
+    download = {
+        "id": 1,
+        "magazine_id": 42,
+        "magazine_title": "GameDesk",
+        "issue_key": "2026-07-01",
+        "release_title": "GameDesk - 2026 07",
+        "package_id": "pkg",
+        "download_url": "https://example.invalid/download",
+        "size_bytes": 1234,
+    }
+
+    assert _import_one(db, settings, download, str(source_dir))
+
+    assert (
+        tmp_path
+        / "library"
+        / "magazines"
+        / "42"
+        / "2026"
+        / "07"
+        / "GameDesk"
+        / "2026-07-01 - GaD7.26.pdf"
+    ).exists()
+
+
 def test_import_flat_pdf_does_not_delete_import_root(tmp_path):
     db = Database(tmp_path / "magazarr.db")
     db.migrate()
