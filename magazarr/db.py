@@ -500,6 +500,51 @@ class Database:
                 (status, storage, download_id),
             )
 
+    def retry_download_error(self, download_id: int, package_id: str | None):
+        with self.connect() as conn:
+            download = conn.execute(
+                """
+                SELECT * FROM downloads
+                WHERE id=? AND status='download_error'
+                """,
+                (download_id,),
+            ).fetchone()
+            if not download:
+                return None
+            conn.execute(
+                """
+                UPDATE downloads
+                SET status='snatched',
+                    package_id=?,
+                    storage='',
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (package_id, download_id),
+            )
+            conn.execute(
+                """
+                UPDATE skipped_releases
+                SET status='unskipped',
+                    package_id=?,
+                    unskipped_at=CURRENT_TIMESTAMP,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE magazine_id=?
+                  AND status='skipped'
+                  AND (
+                    release_title=? COLLATE NOCASE
+                    OR download_url=?
+                  )
+                """,
+                (
+                    package_id,
+                    download["magazine_id"],
+                    download["release_title"],
+                    download["download_url"],
+                ),
+            )
+            return download
+
     def record_issue(
         self,
         magazine_id: int,

@@ -286,8 +286,7 @@ def create_app(settings_store: SettingsStore, db, automation=None):
             if automation:
                 automation.retry_import_error(download_id)
             else:
-                db.reset_import_error(download_id)
-                import_completed(db, settings)
+                _retry_error_download(db, settings, download_id)
         except Exception as exc:
             logger.exception(exc)
             if hasattr(db, "record_event"):
@@ -1223,6 +1222,40 @@ def _unskip_release(db, settings, skip_id: int):
         f"{skipped['magazine_title']} - {skipped['release_title']} ({issue_key})",
     )
     return package_id
+
+
+def _retry_error_download(db, settings, download_id: int):
+    download = _download_by_id(db, download_id)
+    if not download:
+        raise HTTPError(404, "Download not found")
+    if download["status"] == "download_error":
+        client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
+        package_ids = client.add_url(
+            download["download_url"],
+            settings.quasarr_download_category,
+        )
+        if not package_ids:
+            raise HTTPError(502, "Quasarr did not return a package id")
+        package_id = package_ids[0] if package_ids else None
+        retried = db.retry_download_error(download_id, package_id)
+        if not retried:
+            raise HTTPError(404, "Download error not found")
+        notify_download_started(
+            settings,
+            download["magazine_title"],
+            download["release_title"],
+            package_id,
+        )
+        db.record_event(
+            "info",
+            "download",
+            "Retried download error",
+            download["release_title"],
+        )
+        return package_id
+    db.reset_import_error(download_id)
+    import_completed(db, settings)
+    return None
 
 
 def _issue_or_404(db, issue_id: int):

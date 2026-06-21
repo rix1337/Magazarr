@@ -92,8 +92,40 @@ class AutomationService:
 
     def retry_import_error(self, download_id: int):
         with self._lock:
-            self.db.reset_import_error(download_id)
             settings = self.settings_store.load()
+            download = next(
+                (
+                    item
+                    for item in self.db.downloads()
+                    if int(item["id"]) == int(download_id)
+                ),
+                None,
+            )
+            if download and download["status"] == "download_error":
+                client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
+                package_ids = client.add_url(
+                    download["download_url"],
+                    settings.quasarr_download_category,
+                )
+                if not package_ids:
+                    raise RuntimeError("Quasarr did not return a package id")
+                package_id = package_ids[0] if package_ids else None
+                retried = self.db.retry_download_error(download_id, package_id)
+                if retried:
+                    notify_download_started(
+                        settings,
+                        download["magazine_title"],
+                        download["release_title"],
+                        package_id,
+                    )
+                    self.db.record_event(
+                        "info",
+                        "download",
+                        "Retried download error",
+                        download["release_title"],
+                    )
+                return package_id
+            self.db.reset_import_error(download_id)
             return import_completed(self.db, settings)
 
     def unskip_release(self, skip_id: int):

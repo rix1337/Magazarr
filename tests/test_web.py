@@ -47,6 +47,64 @@ def test_missing_quasarr_download_becomes_error_and_skipped(tmp_path, monkeypatc
     )
 
 
+def test_retry_download_error_restarts_quasarr_download_and_unblocks_release(
+    tmp_path, monkeypatch
+):
+    import magazarr.web as web
+
+    add_url_calls = []
+
+    class FakeQuasarrClient:
+        def __init__(self, base_url, api_key):
+            pass
+
+        def add_url(self, download_url, category):
+            add_url_calls.append((download_url, category))
+            return ["Quasarr_docs_retry"]
+
+    monkeypatch.setattr(web, "QuasarrClient", FakeQuasarrClient)
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    db.record_manual_download(
+        magazine["id"],
+        "2026-04-02",
+        "Magazine Title - 2026 04 02",
+        "https://example.invalid/download",
+        42,
+        "missing-package",
+    )
+    db.update_download_status(
+        db.downloads()[0]["id"],
+        "download_error",
+        "Download disappeared from Quasarr before import completed",
+    )
+    db.record_skipped_download(
+        db.downloads()[0],
+        "Download disappeared from Quasarr before import completed",
+    )
+    app = create_app(SettingsStore(tmp_path / "settings.json"), db)
+
+    status, headers, body = _wsgi_post(
+        app,
+        f"/downloads/{db.downloads()[0]['id']}/retry-import",
+    )
+
+    download = db.downloads()[0]
+    assert status.startswith("302")
+    assert add_url_calls == [("https://example.invalid/download", "docs")]
+    assert download["status"] == "snatched"
+    assert download["package_id"] == "Quasarr_docs_retry"
+    assert download["storage"] == ""
+    assert db.skipped_release_count(magazine_id=magazine["id"]) == 0
+    assert not db.has_skipped_release(
+        magazine["id"],
+        "Magazine Title - 2026 04 02",
+        "https://example.invalid/download",
+    )
+
+
 def test_download_status_includes_quasarr_queue_and_history(tmp_path, monkeypatch):
     import magazarr.web as web
 
