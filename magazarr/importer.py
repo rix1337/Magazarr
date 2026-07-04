@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import json
 import re
 import shutil
 from pathlib import Path
@@ -181,12 +182,14 @@ def _import_one(db, settings: Settings, download, storage: str) -> bool:
     if cleanup_dir and not _is_filesystem_root(cleanup_dir):
         shutil.rmtree(cleanup_dir)
     logger.info(f"Imported {dest}")
+    reference = _discord_reference(download)
     notify_import_success(
         settings,
         pdf_magazine_title,
         download["release_title"],
         download["issue_key"],
         dest,
+        reference=reference,
     )
     return True
 
@@ -214,6 +217,24 @@ def _library_destination(settings: Settings, download, pdf: Path) -> Path:
         / title
         / filename
     )
+
+
+def _discord_reference(download) -> dict | None:
+    try:
+        notifications = download["notifications"]
+    except (KeyError, TypeError):
+        return None
+    if not notifications:
+        return None
+    try:
+        parsed = (
+            json.loads(notifications)
+            if isinstance(notifications, str)
+            else notifications
+        )
+    except (TypeError, ValueError):
+        return None
+    return parsed.get("discord") if isinstance(parsed, dict) else None
 
 
 def _download_value(download, key: str) -> str:
@@ -318,11 +339,13 @@ def _fuzzy_title_token_matches(magazine_title: str, filename: str) -> bool:
         for word in tokens(magazine_title)
         if len(word) >= 5 and word not in {"magazine", "journal", "weekly"}
     ]
+    filename_tokens = tokens(filename)
     available = [
         match.group(0)
-        for word in tokens(filename)
+        for word in filename_tokens
         for match in re.finditer(r"[a-z]+", word)
     ]
+    available.extend(_adjacent_single_letter_runs(filename_tokens))
     abbreviations = _title_abbreviations(magazine_title)
     if any(
         found_word.startswith(abbr)
@@ -335,6 +358,27 @@ def _fuzzy_title_token_matches(magazine_title: str, filename: str) -> bool:
         for wanted_word in wanted
         for found_word in available
     )
+
+
+def _adjacent_single_letter_runs(filename_tokens: list[str]) -> list[str]:
+    """Combine adjacent single-letter tokens so filenames like ``c_t`` match ``ct``."""
+    runs = []
+    idx = 0
+    while idx < len(filename_tokens):
+        if len(filename_tokens[idx]) == 1 and filename_tokens[idx].isalpha():
+            end = idx + 1
+            while (
+                end < len(filename_tokens)
+                and len(filename_tokens[end]) == 1
+                and filename_tokens[end].isalpha()
+            ):
+                end += 1
+            if end - idx >= 2:
+                runs.append("".join(filename_tokens[idx:end]))
+            idx = end
+        else:
+            idx += 1
+    return runs
 
 
 def _title_abbreviations(magazine_title: str) -> set[str]:

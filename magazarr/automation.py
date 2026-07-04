@@ -112,12 +112,16 @@ class AutomationService:
                 package_id = package_ids[0] if package_ids else None
                 retried = self.db.retry_download_error(download_id, package_id)
                 if retried:
-                    notify_download_started(
+                    reference = notify_download_started(
                         settings,
                         download["magazine_title"],
                         download["release_title"],
                         package_id,
                     )
+                    if reference:
+                        self.db.update_download_notifications(
+                            download_id, {"discord": reference}
+                        )
                     self.db.record_event(
                         "info",
                         "download",
@@ -149,12 +153,19 @@ class AutomationService:
                 package_id,
             )
             self.db.mark_skipped_release_unskipped(skip_id, package_id)
-            notify_download_started(
+            reference = notify_download_started(
                 settings,
                 skipped["magazine_title"],
                 skipped["release_title"],
                 package_id,
             )
+            download_id = self.db.download_id_by_issue_key(
+                skipped["magazine_id"], issue_key
+            )
+            if reference and download_id:
+                self.db.update_download_notifications(
+                    download_id, {"discord": reference}
+                )
             self.db.record_event(
                 "info",
                 "search",

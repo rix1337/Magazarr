@@ -1209,12 +1209,15 @@ def _unskip_release(db, settings, skip_id: int):
         package_id,
     )
     db.mark_skipped_release_unskipped(skip_id, package_id)
-    notify_download_started(
+    reference = notify_download_started(
         settings,
         skipped["magazine_title"],
         skipped["release_title"],
         package_id,
     )
+    download_id = db.download_id_by_issue_key(skipped["magazine_id"], issue_key)
+    if reference and download_id:
+        db.update_download_notifications(download_id, {"discord": reference})
     db.record_event(
         "info",
         "search",
@@ -1240,12 +1243,14 @@ def _retry_error_download(db, settings, download_id: int):
         retried = db.retry_download_error(download_id, package_id)
         if not retried:
             raise HTTPError(404, "Download error not found")
-        notify_download_started(
+        reference = notify_download_started(
             settings,
             download["magazine_title"],
             download["release_title"],
             package_id,
         )
+        if reference:
+            db.update_download_notifications(download_id, {"discord": reference})
         db.record_event(
             "info",
             "download",

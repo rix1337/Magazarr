@@ -102,13 +102,15 @@ def search_magazine(
             )
             raise
         package_id = package_ids[0] if package_ids else None
-        db.record_download(candidate.magazine_id, candidate, package_id)
-        notify_download_started(
+        download_id = db.record_download(candidate.magazine_id, candidate, package_id)
+        reference = notify_download_started(
             settings,
             candidate.magazine_title,
             candidate.title,
             package_id,
         )
+        if reference:
+            db.update_download_notifications(download_id, {"discord": reference})
         sent_downloads.append(candidate)
         logger.info(f"Sent {candidate.title} to Quasarr as {package_id or 'unknown'}")
         _emit(

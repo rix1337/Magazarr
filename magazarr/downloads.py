@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import json
+
 from magazarr.notifications import notify_error
 from magazarr.quasarr_client import QuasarrClient
 from magazarr.settings import Settings
@@ -64,6 +66,7 @@ def sync_download_errors(
                 reason,
                 magazine_title=download["magazine_title"],
                 release_title=download["release_title"],
+                reference=_discord_reference(download),
             )
 
     for download in downloads:
@@ -90,7 +93,26 @@ def sync_download_errors(
             reason,
             magazine_title=download["magazine_title"],
             release_title=download["release_title"],
+            reference=_discord_reference(download),
         )
+
+
+def _discord_reference(download) -> dict | None:
+    try:
+        notifications = download["notifications"]
+    except (KeyError, TypeError):
+        return None
+    if not notifications:
+        return None
+    try:
+        parsed = (
+            json.loads(notifications)
+            if isinstance(notifications, str)
+            else notifications
+        )
+    except (TypeError, ValueError):
+        return None
+    return parsed.get("discord") if isinstance(parsed, dict) else None
 
 
 def _downloads_by_title(downloads):

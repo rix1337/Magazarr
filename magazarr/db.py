@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -89,9 +90,10 @@ class Database:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(magazine_id, term COLLATE NOCASE)
                 );
-                """
+            """
             )
         self._migrate_clean_retry_suffixes()
+        self._migrate_downloads_notifications_column()
 
     def _migrate_clean_retry_suffixes(self):
         with self.connect() as conn:
@@ -116,6 +118,14 @@ class Database:
                     "UPDATE issues SET issue_key=?, release_title=? WHERE id=?",
                     (clean_key, clean_title, row["id"]),
                 )
+
+    def _migrate_downloads_notifications_column(self):
+        with self.connect() as conn:
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(downloads)")
+            }
+            if "notifications" not in columns:
+                conn.execute("ALTER TABLE downloads ADD COLUMN notifications TEXT")
 
     def add_magazine(self, title: str):
         clean = " ".join(title.split())
@@ -355,10 +365,12 @@ class Database:
                 (magazine_id, magazine_id),
             ).fetchall()
 
-    def record_download(self, magazine_id: int, candidate, package_id: str | None):
+    def record_download(
+        self, magazine_id: int, candidate, package_id: str | None
+    ) -> int:
         issue_key = self._available_issue_key(magazine_id, candidate.issue_key)
         with self.connect() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO downloads(
                     magazine_id, issue_key, release_title, download_url,
@@ -378,6 +390,7 @@ class Database:
                 "UPDATE magazines SET last_search_at=CURRENT_TIMESTAMP WHERE id=?",
                 (magazine_id,),
             )
+            return cursor.lastrowid
 
     def record_manual_download(
         self,
@@ -499,6 +512,32 @@ class Database:
                 """,
                 (status, storage, download_id),
             )
+
+    def update_download_notifications(
+        self, download_id: int, notifications: dict
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE downloads
+                SET notifications=?, updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (json.dumps(notifications), download_id),
+            )
+
+    def download_id_by_issue_key(self, magazine_id: int, issue_key: str) -> int | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id FROM downloads
+                WHERE magazine_id=? AND issue_key=?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (magazine_id, issue_key),
+            ).fetchone()
+            return int(row["id"]) if row else None
 
     def retry_download_error(self, download_id: int, package_id: str | None):
         with self.connect() as conn:

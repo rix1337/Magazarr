@@ -509,6 +509,38 @@ def test_import_allows_short_lowercase_title_embedded_in_pdf_name(tmp_path):
     ).exists()
 
 
+def test_import_allows_underscored_short_title_pdf_name(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    source_dir = tmp_path / "Quasarr" / "ct - 2026 04"
+    source_dir.mkdir(parents=True)
+    (source_dir / "c_t Fotografie - Nr.04 2026.pdf").write_bytes(b"%PDF-1.4")
+    settings = Settings(library_dir=str(tmp_path / "library"))
+    download = {
+        "id": 1,
+        "magazine_id": 42,
+        "magazine_title": "ct",
+        "issue_key": "2026-04-01",
+        "release_title": "ct Fotografie No 04 2026",
+        "package_id": "pkg",
+        "download_url": "https://example.invalid/download",
+        "size_bytes": 1234,
+    }
+
+    assert _import_one(db, settings, download, str(source_dir))
+
+    assert (
+        tmp_path
+        / "library"
+        / "magazines"
+        / "42"
+        / "2026"
+        / "04"
+        / "ct"
+        / "2026-04-01 - c_t Fotografie - Nr.04 2026.pdf"
+    ).exists()
+
+
 def test_import_allows_camelcase_compact_pdf_name(tmp_path):
     db = Database(tmp_path / "magazarr.db")
     db.migrate()
