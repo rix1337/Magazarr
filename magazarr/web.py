@@ -55,6 +55,19 @@ def create_app(settings_store: SettingsStore, db, automation=None):
 
     @app.post("/magazines/<magazine_id:int>/delete")
     def delete_magazine(magazine_id):
+        for issue in db.issues(limit=-1, magazine_id=magazine_id):
+            path = Path(issue["file_path"])
+            try:
+                if path.exists() and path.is_file():
+                    path.unlink()
+            except OSError as exc:
+                db.record_event(
+                    "error",
+                    "library",
+                    f"Failed to delete issue file: {path}",
+                    str(exc),
+                )
+                raise HTTPError(500, str(exc)) from exc
         db.delete_magazine(magazine_id)
         redirect("/")
 

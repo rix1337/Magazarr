@@ -279,6 +279,35 @@ def test_download_status_skips_quasarr_without_pending_downloads(tmp_path, monke
     assert payload["error"] == ""
 
 
+def test_delete_magazine_removes_all_issue_files_and_series(tmp_path):
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    db.add_magazine("Magazine Title")
+    magazine = db.magazines()[0]
+    files = [tmp_path / f"issue-{number}.pdf" for number in range(51)]
+    for number, path in enumerate(files):
+        path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+        db.record_issue(
+            magazine["id"],
+            f"issue-{number}",
+            f"Magazine Title - Issue {number}",
+            str(path),
+            path.stat().st_size,
+            None,
+        )
+    app = create_app(SettingsStore(tmp_path / "settings.json"), db)
+
+    status, headers, body = _wsgi_post(
+        app,
+        f"/magazines/{magazine['id']}/delete",
+    )
+
+    assert status.startswith("302")
+    assert not any(path.exists() for path in files)
+    assert db.magazine_by_id(magazine["id"]) is None
+    assert db.issue_count(magazine_id=magazine["id"]) == 0
+
+
 def test_delete_failure_is_ok_when_package_is_gone(tmp_path):
     db = Database(tmp_path / "magazarr.db")
     db.migrate()
