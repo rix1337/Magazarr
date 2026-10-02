@@ -452,10 +452,17 @@ def _release_family(magazine_title: str, title: str) -> tuple[str, ...]:
             skip_next_number = False
             continue
         skip_next_number = False
-        if word in {"issue", "iss", "no", "nr", "number"}:
+        if word in {"issue", "iss", "no", "nr", "number", "ausgabe"}:
             skip_next_number = True
             continue
-        if word.isdigit() or word in {"vom"}:
+        if word.isdigit() or word in {
+            "vom",
+            "aktuelle",
+            "inkl",
+            "jahresarchiven",
+            "einzeln",
+            "ladbar",
+        }:
             continue
         family.append(word)
     return tuple(family)

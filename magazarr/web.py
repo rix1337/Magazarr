@@ -292,6 +292,31 @@ def create_app(settings_store: SettingsStore, db, automation=None):
         db.delete_blacklist_term(term_id)
         redirect("/")
 
+    @app.get("/api/magazines/<magazine_id:int>/duplicates")
+    def magazine_duplicates_api(magazine_id):
+        if not db.magazine_by_id(magazine_id):
+            raise HTTPError(404, "Magazine not found")
+        groups = db.find_duplicates(magazine_id)
+        payload = []
+        for group in groups:
+            payload.append([issue_payload(row) for row in group])
+        return json_response(
+            {"groups": payload, "total": sum(len(g) - 1 for g in groups)}
+        )
+
+    @app.post("/api/magazines/<magazine_id:int>/duplicates/clear")
+    def clear_magazine_duplicates(magazine_id):
+        if not db.magazine_by_id(magazine_id):
+            raise HTTPError(404, "Magazine not found")
+        deleted = db.delete_duplicate_issues(magazine_id)
+        db.record_event(
+            "info",
+            "library",
+            f"Cleared {deleted} duplicate(s)",
+            f"magazine_id={magazine_id}",
+        )
+        return json_response({"deleted": deleted})
+
     @app.post("/downloads/<download_id:int>/retry-import")
     def retry_import(download_id):
         settings = settings_store.load()
@@ -423,6 +448,11 @@ def magazine_rows(magazines, blacklist, db, downloading_counts=None) -> str:
                 <div class="mag-stats">
                   {mag_stat_button("Downloading", downloading, mag["id"], "downloading", mag["title"])}
                   {mag_stat_button("Skipped / Errors", skipped_and_errors, mag["id"], "skipped", mag["title"])}
+                  <button class="stat" type="button" data-open-mag-items
+                    data-kind="duplicates" data-magazine-id="{mag["id"]}"
+                    data-title="Duplicates" data-magazine-title="{html.escape(mag["title"])}">
+                    <span>Duplicates</span><strong data-dup-count="{mag["id"]}">…</strong>
+                  </button>
                 </div>
                 <div class="card-actions">
                   <form class="js-job-form" method="post" action="/api/magazines/{mag["id"]}/search"><button>Search</button></form>
@@ -571,6 +601,7 @@ def magazine_modal() -> str:
         <form id="magazine-modal-delete-errors" method="post" hidden data-confirm="Delete all error downloads for this magazine?">
           <button type="submit" class="secondary">Delete Errors</button>
         </form>
+        <button type="button" id="magazine-modal-clear-duplicates" class="secondary" hidden>Clear Duplicates</button>
       </div>
       <div id="magazine-modal-body" class="modal-list"></div>
       <div class="pager">
@@ -968,6 +999,7 @@ def page_script() -> str:
   const magazineModalJump = document.getElementById("magazine-modal-jump");
   const magazineModalClear = document.getElementById("magazine-modal-clear");
   const magazineModalDeleteErrors = document.getElementById("magazine-modal-delete-errors");
+  const magazineModalClearDuplicates = document.getElementById("magazine-modal-clear-duplicates");
   let activeMagazine = { id: 0, kind: "", label: "", title: "", offset: 0 };
 
   document.querySelector("[data-open-settings]")?.addEventListener("click", () => {
@@ -987,8 +1019,23 @@ def page_script() -> str:
       if (typeof data.magazines === "string") {
         magList.innerHTML = data.magazines;
       }
+      loadDuplicateCounts();
     } catch (error) {
       console.warn(error);
+    }
+  }
+
+  async function loadDuplicateCounts() {
+    const buttons = document.querySelectorAll("[data-dup-count]");
+    for (const btn of buttons) {
+      const magId = btn.dataset.dupCount;
+      try {
+        const res = await fetch(`/api/magazines/${magId}/duplicates`);
+        const data = await res.json();
+        btn.textContent = data.total;
+      } catch {
+        btn.textContent = "?";
+      }
     }
   }
 
@@ -1099,11 +1146,27 @@ def page_script() -> str:
         </div>`;
       return card;
     }
+    if (kind === "duplicate") {
+      card.innerHTML = `
+        <div class="list-title">${esc(item.issue_key || item.release_title)}</div>
+        <div class="muted">${esc(item.release_title)}</div>
+        <div class="download-meta"><span>${esc((item.size_bytes / 1048576).toFixed(1))} MB</span></div>
+        <div class="file-path">${esc(item.file_path)}</div>
+        <div class="download-actions">
+          <a class="button-link" href="${esc(item.view_url)}" target="_blank" rel="noreferrer">View</a>
+          <form method="post" action="/issues/${item.id}/delete" data-confirm="Delete this duplicate?"><button class="secondary">Delete</button></form>
+        </div>`;
+      return card;
+    }
     return renderDownloadCard(item);
   }
 
   async function loadMagazineItems(nextOffset = 0) {
     activeMagazine.offset = Math.max(0, nextOffset);
+    if (activeMagazine.kind === "duplicates") {
+      await loadDuplicates();
+      return;
+    }
     const limit = activeMagazine.kind === "downloaded" ? 1 : baseLimit;
     const params = new URLSearchParams({
       limit,
@@ -1127,6 +1190,65 @@ def page_script() -> str:
       : `${start}-${end}`;
     magazineModalPrev.disabled = data.offset <= 0;
     magazineModalNext.disabled = data.offset + data.limit >= data.total;
+  }
+
+  async function loadDuplicates() {
+    magazineModalBody.replaceChildren();
+    magazineModalPrev.disabled = true;
+    magazineModalNext.disabled = true;
+    magazineModalJump.hidden = true;
+    try {
+      const res = await fetch(`/api/magazines/${activeMagazine.id}/duplicates`);
+      const data = await res.json();
+      if (!data.groups.length) {
+        magazineModalBody.innerHTML = '<div class="muted">No duplicates found.</div>';
+        magazineModalCount.textContent = '0 duplicate(s)';
+        magazineModalPage.textContent = '0/0';
+        return;
+      }
+      let dupTotal = 0;
+      for (const group of data.groups) {
+        dupTotal += group.length - 1;
+        const header = document.createElement("div");
+        header.className = "list-title";
+        header.style.cssText = "margin-top:8px;padding:6px 0;border-bottom:1px solid var(--line);";
+        header.textContent = `Duplicate group (${group.length} issues, keep largest)`;
+        magazineModalBody.append(header);
+        for (let idx = 0; idx < group.length; idx++) {
+          const item = group[idx];
+          const card = itemCard("duplicate", item);
+          if (idx === 0) {
+            const badge = document.createElement("span");
+            badge.className = "muted";
+            badge.style.cssText = "font-size:11px;font-weight:700;color:var(--accent);";
+            badge.textContent = " ← KEEP";
+            card.querySelector(".list-title").append(badge);
+          } else {
+            const badge = document.createElement("span");
+            badge.style.cssText = "font-size:11px;font-weight:700;color:#c00;";
+            badge.textContent = " ← DUPLICATE";
+            card.querySelector(".list-title").append(badge);
+          }
+          magazineModalBody.append(card);
+        }
+      }
+      magazineModalCount.textContent = `${dupTotal} duplicate(s) in ${data.groups.length} group(s)`;
+      magazineModalPage.textContent = `${data.groups.length} group(s)`;
+    } catch (error) {
+      magazineModalBody.innerHTML = `<div class="muted">${esc(error.message)}</div>`;
+    }
+  }
+
+  async function clearDuplicates() {
+    if (!confirm("Delete all duplicate issues? The largest file in each group will be kept.")) return;
+    try {
+      const res = await fetch(`/api/magazines/${activeMagazine.id}/duplicates/clear`, { method: "POST" });
+      const data = await res.json();
+      await refreshDashboard();
+      await loadDuplicates();
+    } catch (error) {
+      console.error(error);
+    }
   }
 
   document.addEventListener("submit", (event) => {
@@ -1155,6 +1277,10 @@ def page_script() -> str:
       if (magazineModalDeleteErrors) {
         magazineModalDeleteErrors.hidden = activeMagazine.kind !== "skipped";
         magazineModalDeleteErrors.action = `/magazines/${activeMagazine.id}/errors/delete`;
+      }
+      if (magazineModalClearDuplicates) {
+        magazineModalClearDuplicates.hidden = activeMagazine.kind !== "duplicates";
+        magazineModalClearDuplicates.onclick = () => clearDuplicates();
       }
       magazineModal?.showModal();
       loadMagazineItems(0);
@@ -1192,6 +1318,7 @@ def page_script() -> str:
     magazineModalJump.hidden = data.rows.length <= 1;
   }
   loadDownloads();
+  loadDuplicateCounts();
   setInterval(() => {
     refreshDashboard();
     loadDownloads();

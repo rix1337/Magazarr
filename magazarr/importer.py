@@ -249,6 +249,22 @@ def _issue_path_parts(issue_key: str, release_title: str = "") -> tuple[str, str
     if len(parts) >= 2 and len(parts[0]) == 4 and len(parts[1]) == 2:
         if parts[0].isdigit() and parts[1].isdigit():
             return parts[0], parts[1]
+    # Handle YYYY-issue-NNNN pattern: extract year, try to get month from title
+    if (
+        len(parts) == 3
+        and len(parts[0]) == 4
+        and parts[0].isdigit()
+        and parts[1] == "issue"
+    ):
+        year = parts[0]
+        # Try to extract month from release title
+        issue = parse_issue_date(release_title)
+        if issue and issue.value:
+            return year, f"{issue.value.month:02d}"
+        release_parts = _issue_path_parts_from_text(release_title)
+        if release_parts:
+            return year, release_parts[1]
+        return year, "unknown-month"
     issue = parse_issue_date(release_title)
     if issue and issue.value:
         return str(issue.value.year), f"{issue.value.month:02d}"

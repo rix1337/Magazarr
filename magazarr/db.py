@@ -1,10 +1,36 @@
 # -*- coding: utf-8 -*-
 
 import json
+import re
+import shutil
 import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 
-from magazarr.utils import clean_release_title
+from magazarr.utils import clean_release_title, parse_issue_date
+
+
+def _compute_sort_value(issue_key: str, release_title: str = "") -> str:
+    """Compute a normalized sort value from issue_key for proper ordering.
+
+    Date-based keys sort normally. Issue-number keys sort after all dates
+    in the same year (using month 00) so they appear after date-based issues
+    in DESC order.
+    """
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", issue_key)
+    if match:
+        return issue_key
+    match = re.fullmatch(r"(\d{4})-issue-(\d{4})", issue_key)
+    if match:
+        year, number = match.group(1), int(match.group(2))
+        return f"{year}-00-{number:04d}"
+    match = re.fullmatch(r"issue-(\d{4})", issue_key)
+    if match:
+        return f"0000-00-{int(match.group(1)):04d}"
+    issue = parse_issue_date(release_title)
+    if issue and issue.value:
+        return issue.value.isoformat()
+    return issue_key
 
 
 class Database:
@@ -39,6 +65,7 @@ class Database:
                     acquired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     size_bytes INTEGER NOT NULL DEFAULT 0,
                     package_id TEXT,
+                    sort_value TEXT,
                     UNIQUE(magazine_id, issue_key)
                 );
 
@@ -94,6 +121,9 @@ class Database:
             )
         self._migrate_clean_retry_suffixes()
         self._migrate_downloads_notifications_column()
+        self._migrate_sort_value()
+        self._migrate_fix_unknown_paths()
+        self._migrate_clamp_future_dates()
 
     def _migrate_clean_retry_suffixes(self):
         with self.connect() as conn:
@@ -126,6 +156,133 @@ class Database:
             }
             if "notifications" not in columns:
                 conn.execute("ALTER TABLE downloads ADD COLUMN notifications TEXT")
+
+    def _migrate_sort_value(self):
+        with self.connect() as conn:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(issues)")}
+            if "sort_value" in columns:
+                return
+            conn.execute("ALTER TABLE issues ADD COLUMN sort_value TEXT")
+            rows = conn.execute(
+                "SELECT id, issue_key, release_title FROM issues"
+            ).fetchall()
+            for row in rows:
+                sort_value = _compute_sort_value(row["issue_key"], row["release_title"])
+                conn.execute(
+                    "UPDATE issues SET sort_value=? WHERE id=?",
+                    (sort_value, row["id"]),
+                )
+
+    def _migrate_fix_unknown_paths(self):
+        """Move issues from unknown-year/unknown-month to correct folders."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT id, magazine_id, issue_key, release_title, file_path
+                   FROM issues WHERE file_path LIKE '%/unknown-year/%'"""
+            ).fetchall()
+            for row in rows:
+                issue_key = row["issue_key"]
+                release_title = row["release_title"]
+                old_path = Path(row["file_path"])
+                parts = issue_key.split("-")
+                year = None
+                month = None
+                if len(parts) >= 1 and len(parts[0]) == 4 and parts[0].isdigit():
+                    year = parts[0]
+                if year:
+                    issue = parse_issue_date(release_title)
+                    if issue and issue.value:
+                        month = f"{issue.value.month:02d}"
+                    else:
+                        from magazarr.utils import MONTHS as _MONTHS
+                        from magazarr.utils import tokens as _tokens
+
+                        words = _tokens(release_title)
+                        for idx, word in enumerate(words):
+                            m = _MONTHS.get(word)
+                            if m:
+                                month = f"{m:02d}"
+                                break
+                            if word.isdigit() and 1 <= int(word) <= 12:
+                                for pos in (idx + 1, idx - 1):
+                                    if (
+                                        0 <= pos < len(words)
+                                        and words[pos].isdigit()
+                                        and len(words[pos]) == 4
+                                    ):
+                                        month = f"{int(word):02d}"
+                                        break
+                                if month:
+                                    break
+                if year and month:
+                    new_path = (
+                        old_path.parent.parent.parent
+                        / year
+                        / month
+                        / old_path.parent.name
+                        / old_path.name
+                    )
+                    if new_path != old_path:
+                        new_path.parent.mkdir(parents=True, exist_ok=True)
+                        if old_path.exists():
+                            shutil.move(str(old_path), str(new_path))
+                            conn.execute(
+                                "UPDATE issues SET file_path=? WHERE id=?",
+                                (str(new_path), row["id"]),
+                            )
+                            cover_path = old_path.parent / f".{old_path.stem}.cover.png"
+                            if cover_path.exists():
+                                new_cover = (
+                                    new_path.parent / f".{new_path.stem}.cover.png"
+                                )
+                                shutil.move(str(cover_path), str(new_cover))
+
+    def _migrate_clamp_future_dates(self):
+        """Fix issues with future dates by clamping and deduplicating."""
+        today = date.today()
+        future_cutoff = today + timedelta(days=30)
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id, magazine_id, issue_key, release_title, file_path FROM issues"
+            ).fetchall()
+            for row in rows:
+                issue_key = row["issue_key"]
+                match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", issue_key)
+                if not match:
+                    continue
+                try:
+                    d = date(
+                        int(match.group(1)), int(match.group(2)), int(match.group(3))
+                    )
+                except ValueError:
+                    continue
+                if d <= future_cutoff:
+                    continue
+                new_key = today.isoformat()
+                existing = conn.execute(
+                    "SELECT id FROM issues WHERE magazine_id=? AND issue_key=? AND id!=?",
+                    (row["magazine_id"], new_key, row["id"]),
+                ).fetchone()
+                if existing:
+                    continue
+                conn.execute(
+                    "UPDATE issues SET issue_key=?, sort_value=? WHERE id=?",
+                    (new_key, new_key, row["id"]),
+                )
+                old_path = Path(row["file_path"])
+                new_filename = old_path.name.replace(issue_key, new_key, 1)
+                new_path = old_path.with_name(new_filename)
+                if old_path.exists() and not new_path.exists():
+                    shutil.move(str(old_path), str(new_path))
+                    conn.execute(
+                        "UPDATE issues SET file_path=? WHERE id=?",
+                        (str(new_path), row["id"]),
+                    )
+                    sort_value = _compute_sort_value(new_key, row["release_title"])
+                    conn.execute(
+                        "UPDATE issues SET sort_value=? WHERE id=?",
+                        (sort_value, row["id"]),
+                    )
 
     def add_magazine(self, title: str):
         clean = " ".join(title.split())
@@ -187,7 +344,7 @@ class Database:
                 SELECT i.*, m.title AS magazine_title
                 FROM issues i
                 JOIN magazines m ON m.id = i.magazine_id
-                ORDER BY i.issue_key DESC, i.acquired_at DESC, i.id DESC
+                ORDER BY COALESCE(i.sort_value, i.issue_key) DESC, i.acquired_at DESC, i.id DESC
                 LIMIT ? OFFSET ?
                 """,
                 (limit, offset),
@@ -239,7 +396,7 @@ class Database:
                 FROM issues i
                 JOIN magazines m ON m.id = i.magazine_id
                 {where}
-                ORDER BY i.issue_key DESC, i.acquired_at DESC, i.id DESC
+                ORDER BY COALESCE(i.sort_value, i.issue_key) DESC, i.acquired_at DESC, i.id DESC
                 LIMIT ? OFFSET ?
                 """,
                 tuple(params),
@@ -253,7 +410,7 @@ class Database:
                 FROM issues i
                 JOIN magazines m ON m.id = i.magazine_id
                 WHERE m.id=?
-                ORDER BY i.issue_key ASC, i.acquired_at ASC
+                ORDER BY COALESCE(i.sort_value, i.issue_key) ASC, i.acquired_at ASC
                 LIMIT ? OFFSET ?
                 """,
                 (magazine_id, limit, offset),
@@ -593,13 +750,14 @@ class Database:
         size_bytes: int,
         package_id: str | None,
     ):
+        sort_value = _compute_sort_value(issue_key, release_title)
         with self.connect() as conn:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO issues(
                     magazine_id, issue_key, release_title, file_path,
-                    size_bytes, package_id
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    size_bytes, package_id, sort_value
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     magazine_id,
@@ -608,6 +766,7 @@ class Database:
                     file_path,
                     size_bytes,
                     package_id,
+                    sort_value,
                 ),
             )
             conn.execute(
@@ -983,3 +1142,58 @@ class Database:
         for row in rows:
             grouped.setdefault(int(row["magazine_id"]), []).append(row)
         return grouped
+
+    def find_duplicates(self, magazine_id: int) -> list[list[sqlite3.Row]]:
+        """Find groups of duplicate issues for a magazine.
+
+        Duplicates are issues that share the same issue number or
+        have overlapping week/month aliases.
+        """
+        from magazarr.utils import issue_aliases, parse_issue_number
+
+        issues = self.issues(limit=-1, magazine_id=magazine_id)
+        groups: dict[str, list[sqlite3.Row]] = {}
+        for issue in issues:
+            aliases = issue_aliases(issue["release_title"], "", None)
+            number = parse_issue_number(issue["release_title"])
+            if number:
+                if number.year:
+                    aliases.add(f"{number.year}-issue-{number.number:04d}")
+                aliases.add(f"issue-{number.number:04d}")
+            for alias in aliases:
+                if (
+                    alias.startswith("week:")
+                    or alias.startswith("month:")
+                    or alias.startswith("issue-")
+                    or "-issue-" in alias
+                ):
+                    groups.setdefault(alias, []).append(issue)
+        result = []
+        seen_ids: set[int] = set()
+        for _alias, group in sorted(groups.items(), key=lambda x: x[0]):
+            unique = []
+            for issue in group:
+                if issue["id"] not in seen_ids:
+                    unique.append(issue)
+                    seen_ids.add(issue["id"])
+            if len(unique) >= 2:
+                unique.sort(key=lambda i: i["size_bytes"], reverse=True)
+                result.append(unique)
+        deduped: list[list[sqlite3.Row]] = []
+        seen_group_ids: set[frozenset[int]] = set()
+        for group in result:
+            key = frozenset(i["id"] for i in group)
+            if key not in seen_group_ids:
+                seen_group_ids.add(key)
+                deduped.append(group)
+        return deduped
+
+    def delete_duplicate_issues(self, magazine_id: int) -> int:
+        """Delete duplicate issues, keeping the largest file in each group."""
+        duplicates = self.find_duplicates(magazine_id)
+        deleted = 0
+        for group in duplicates:
+            for issue in group[1:]:
+                self.delete_issue(issue["id"])
+                deleted += 1
+        return deleted

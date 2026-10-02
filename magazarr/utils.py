@@ -112,6 +112,21 @@ def search_term(title: str) -> str:
     return re.sub(r"[.\-/]", " ", title).strip()
 
 
+def _clamp_future_date(value: date) -> date:
+    """Clamp dates that are implausibly far in the future.
+
+    For dates with day > 1 (specific dates), clamp if more than 30 days ahead.
+    For dates with day = 1 (month-only dates), don't clamp as these are common
+    for monthly magazines where the exact day isn't known.
+    """
+    today = date.today()
+    if value.day == 1:
+        return value
+    if value > today + timedelta(days=30):
+        return today
+    return value
+
+
 def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
     clean = " ".join(tokens(title))
 
@@ -123,6 +138,7 @@ def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
         if match:
             value = _date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
             if value:
+                value = _clamp_future_date(value)
                 return IssueDate(value.isoformat(), value)
 
     match = re.search(
@@ -131,12 +147,14 @@ def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
     if match:
         value = _date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
         if value:
+            value = _clamp_future_date(value)
             return IssueDate(value.isoformat(), value)
 
     match = re.search(r"\b(20\d{2})[ ._-](0?[1-9]|1[0-2])\b", clean)
     if match:
         value = _date(int(match.group(1)), int(match.group(2)), 1)
         if value:
+            value = _clamp_future_date(value)
             return IssueDate(value.isoformat(), value)
 
     words = clean.split()
@@ -149,7 +167,23 @@ def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
             day = _nearby_day(words, idx)
             value = _date(year, month, day or 1)
             if value:
+                value = _clamp_future_date(value)
                 return IssueDate(value.isoformat(), value)
+
+    # "Ausgabe YYYY-NN" or "Ausgabe NN YYYY" (German for "Issue")
+    # Handle "Ausgabe YYYY NN" (e.g., "Ausgabe 2026 18" from tokenized "Ausgabe 2026-18")
+    match = re.search(r"\bausgabe\s*(20\d{2})\s*(\d{1,4})\b", clean)
+    if match:
+        year, number = match.group(1), int(match.group(2))
+        if 1 <= number <= 9999:
+            return IssueDate(f"{year}-issue-{number:04d}", None)
+    # Handle "Ausgabe NN YYYY" (e.g., "Ausgabe 18 2026")
+    match = re.search(r"\bausgabe\s*(\d{1,4})\s*(20\d{2})\b", clean)
+    if match:
+        number = int(match.group(1))
+        year = match.group(2)
+        if 1 <= number <= 9999:
+            return IssueDate(f"{year}-issue-{number:04d}", None)
 
     match = re.search(
         r"\b(?:issue|iss|no|nr|number)\s*(\d{1,4})(?:\s*(20\d{2}))?\b", clean
@@ -164,7 +198,9 @@ def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
     if pub_date:
         parsed = parse_rfc822(pub_date)
         if parsed:
-            return IssueDate(parsed.date().isoformat(), parsed.date())
+            d = parsed.date()
+            d = _clamp_future_date(d)
+            return IssueDate(d.isoformat(), d)
 
     return None
 
@@ -172,15 +208,24 @@ def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
 def parse_issue_number(title: str) -> IssueNumber | None:
     words = tokens(title)
     for idx, word in enumerate(words[:-1]):
-        if word not in {"issue", "iss", "no", "nr", "number"}:
+        if word not in {"issue", "iss", "no", "nr", "number", "ausgabe"}:
             continue
         number_word = words[idx + 1]
         if not number_word.isdigit():
             continue
+        # If the next word looks like a year (20xx), check if it's followed by a date
         if re.fullmatch(r"20\d{2}", number_word):
+            # "No 2026 06 06" pattern: year followed by month and day (a date, not issue number)
             next_words = words[idx + 2 : idx + 4]
-            if next_words and all(word.isdigit() for word in next_words):
+            if len(next_words) >= 2 and all(w.isdigit() for w in next_words):
                 continue
+            # "Ausgabe 2026 18" pattern: year then single issue number
+            if idx + 2 < len(words) and words[idx + 2].isdigit():
+                actual_number = int(words[idx + 2])
+                if 0 < actual_number <= 9999:
+                    return IssueNumber(number=actual_number, year=int(number_word))
+            # If no number follows the year, skip
+            continue
         number = int(number_word)
         if number <= 0:
             continue
@@ -204,6 +249,9 @@ def issue_aliases(
         aliases.add(issue.key)
         if issue.value:
             aliases.add(f"date:{issue.value.isoformat()}")
+            iso = issue.value.isocalendar()
+            aliases.add(f"week:{iso[0]}-{iso[1]:02d}")
+            aliases.add(f"month:{issue.value.year}-{issue.value.month:02d}")
 
     number = parse_issue_number(title)
     if number:
