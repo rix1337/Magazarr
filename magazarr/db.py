@@ -5,6 +5,7 @@ import re
 import shutil
 import sqlite3
 from datetime import date, timedelta
+from hashlib import md5
 from pathlib import Path
 
 from magazarr.utils import clean_release_title, parse_issue_date
@@ -1214,6 +1215,23 @@ class Database:
                 if len(group) > 1:
                     proximity_groups.append(group)
 
+        # Group by file content (catches same file downloaded twice)
+        file_groups: dict[str, list] = {}
+        for data in issue_data:
+            file_path_str = data["issue"]["file_path"]
+            try:
+                file_path = Path(file_path_str)
+                if not file_path.exists():
+                    continue
+                size = file_path.stat().st_size
+                with open(file_path, "rb") as f:
+                    sample = f.read(min(1024 * 1024, size))
+                file_hash = md5(sample).hexdigest()
+                key = f"{size}-{file_hash}"
+                file_groups.setdefault(key, []).append(data)
+            except Exception:
+                pass
+
         # Combine results
         result = []
         seen_ids: set[int] = set()
@@ -1236,6 +1254,16 @@ class Database:
                 seen_ids.add(ids)
                 issues_in_group.sort(key=lambda i: i["size_bytes"], reverse=True)
                 result.append(issues_in_group)
+
+        # Add file-based groups
+        for group in file_groups.values():
+            if len(group) >= 2:
+                issues_in_group = [g["issue"] for g in group]
+                ids = frozenset(i["id"] for i in issues_in_group)
+                if ids not in seen_ids:
+                    seen_ids.add(ids)
+                    issues_in_group.sort(key=lambda i: i["size_bytes"], reverse=True)
+                    result.append(issues_in_group)
 
         return result
 
