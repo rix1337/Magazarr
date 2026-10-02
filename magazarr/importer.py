@@ -3,6 +3,7 @@
 import json
 import re
 import shutil
+from datetime import date
 from pathlib import Path
 
 import fitz
@@ -203,6 +204,7 @@ def _library_destination(settings: Settings, download, pdf: Path) -> Path:
     year, month = _issue_path_parts(
         download["issue_key"],
         _download_value(download, "release_title"),
+        fallback_date=date.today(),
     )
     title = safe_filename(download["magazine_title"])
     filename = (
@@ -244,7 +246,9 @@ def _download_value(download, key: str) -> str:
         return ""
 
 
-def _issue_path_parts(issue_key: str, release_title: str = "") -> tuple[str, str]:
+def _issue_path_parts(
+    issue_key: str, release_title: str = "", fallback_date: date | None = None
+) -> tuple[str, str]:
     parts = str(issue_key or "").split("-")
     if len(parts) >= 2 and len(parts[0]) == 4 and len(parts[1]) == 2:
         if parts[0].isdigit() and parts[1].isdigit():
@@ -264,6 +268,9 @@ def _issue_path_parts(issue_key: str, release_title: str = "") -> tuple[str, str
         release_parts = _issue_path_parts_from_text(release_title)
         if release_parts:
             return year, release_parts[1]
+        # Fallback: use provided date (e.g. today) for month
+        if fallback_date:
+            return year, f"{fallback_date.month:02d}"
         return year, "unknown-month"
     issue = parse_issue_date(release_title)
     if issue and issue.value:
@@ -271,6 +278,8 @@ def _issue_path_parts(issue_key: str, release_title: str = "") -> tuple[str, str
     release_parts = _issue_path_parts_from_text(release_title)
     if release_parts:
         return release_parts
+    if fallback_date:
+        return str(fallback_date.year), f"{fallback_date.month:02d}"
     return "unknown-year", "unknown-month"
 
 

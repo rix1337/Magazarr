@@ -178,12 +178,13 @@ class Database:
         """Move issues from unknown-year/unknown-month to correct folders."""
         with self.connect() as conn:
             rows = conn.execute(
-                """SELECT id, magazine_id, issue_key, release_title, file_path
+                """SELECT id, magazine_id, issue_key, release_title, file_path, acquired_at
                    FROM issues WHERE file_path LIKE '%/unknown-year/%'"""
             ).fetchall()
             for row in rows:
                 issue_key = row["issue_key"]
                 release_title = row["release_title"]
+                acquired_at = row["acquired_at"]
                 old_path = Path(row["file_path"])
                 parts = issue_key.split("-")
                 year = None
@@ -215,6 +216,13 @@ class Database:
                                         break
                                 if month:
                                     break
+                    # Fallback: use acquired_at month if no month found in title
+                    if not month and acquired_at:
+                        try:
+                            acq_date = date.fromisoformat(str(acquired_at)[:10])
+                            month = f"{acq_date.month:02d}"
+                        except (ValueError, TypeError):
+                            pass
                 if year and month:
                     new_path = (
                         old_path.parent.parent.parent
