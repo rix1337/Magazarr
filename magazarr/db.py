@@ -1172,143 +1172,50 @@ class Database:
     def find_duplicates(self, magazine_id: int) -> list[list[sqlite3.Row]]:
         """Find groups of duplicate issues for a magazine.
 
-        Uses both issue-number matching and date-proximity detection.
-        Calculates the median interval between issues to determine
-        expected publication frequency, then flags issues within 60%
-        of that interval as potential duplicates.
+        Uses PDF first-page comparison as the sole detection method.
+        Extracts the first page of each PDF, renders at 50% scale,
+        and groups by page hash. Only issues with identical first
+        pages are flagged as duplicates.
         """
+        import hashlib
 
-        from magazarr.utils import parse_issue_date, parse_issue_number
+        import fitz
 
         issues = self.issues(limit=-1, magazine_id=magazine_id)
         if len(issues) < 2:
             return []
 
-        # Parse dates and issue numbers for all issues
-        issue_data = []
+        # Extract first-page hashes for all issues
+        page_hashes: dict[int, str] = {}
         for issue in issues:
-            parsed_date = parse_issue_date(issue["release_title"])
-            issue_number = parse_issue_number(issue["release_title"])
-            issue_data.append(
-                {
-                    "issue": issue,
-                    "date": parsed_date.value if parsed_date else None,
-                    "number": issue_number.number if issue_number else None,
-                    "year": issue_number.year if issue_number else None,
-                }
-            )
-
-        # Group by issue number (catches ct-style duplicates)
-        number_groups: dict[str, list] = {}
-        for data in issue_data:
-            if data["number"] is not None:
-                key = f"{data['year'] or 0}-issue-{data['number']:04d}"
-                number_groups.setdefault(key, []).append(data)
-
-        # Calculate median interval for date-based detection
-        dated_issues = sorted(
-            [d for d in issue_data if d["date"] is not None], key=lambda x: x["date"]
-        )
-        median_interval = None
-        if len(dated_issues) >= 3:
-            intervals = []
-            for i in range(1, len(dated_issues)):
-                delta = (dated_issues[i]["date"] - dated_issues[i - 1]["date"]).days
-                if delta > 0:
-                    intervals.append(delta)
-            if intervals:
-                intervals.sort()
-                median_interval = intervals[len(intervals) // 2]
-
-        # Group by date proximity (catches GameStar/Der Spiegel-style duplicates)
-        proximity_groups: list[list] = []
-        if median_interval and len(dated_issues) >= 2:
-            threshold = max(1, int(median_interval * 0.6))
-            used = set()
-            for i, data1 in enumerate(dated_issues):
-                if i in used:
+            file_path_str = issue["file_path"]
+            try:
+                file_path = Path(file_path_str)
+                if not file_path.exists():
                     continue
-                group = [data1]
-                used.add(i)
-                for j, data2 in enumerate(dated_issues[i + 1 :], start=i + 1):
-                    if j in used:
-                        continue
-                    delta = abs((data2["date"] - data1["date"]).days)
-                    if delta <= threshold:
-                        group.append(data2)
-                        used.add(j)
-                if len(group) > 1:
-                    proximity_groups.append(group)
+                doc = fitz.open(str(file_path))
+                if len(doc) > 0:
+                    page = doc[0]
+                    pix = page.get_pixmap(matrix=fitz.Matrix(0.5, 0.5))
+                    page_hash = hashlib.md5(pix.tobytes("png")).hexdigest()
+                    page_hashes[issue["id"]] = page_hash
+                doc.close()
+            except Exception:
+                pass
 
-        # Group by PDF first-page comparison (catches same content downloaded twice)
-        pdf_groups: list[list] = []
-        if len(issue_data) >= 2:
-            # Extract first-page hashes for all issues
-            page_hashes = []
-            for data in issue_data:
-                file_path_str = data["issue"]["file_path"]
-                try:
-                    file_path = Path(file_path_str)
-                    if not file_path.exists():
-                        continue
-                    # Extract first page and compute hash
-                    import fitz
+        # Group by page hash
+        hash_groups: dict[str, list[sqlite3.Row]] = {}
+        for issue in issues:
+            page_hash = page_hashes.get(issue["id"])
+            if page_hash:
+                hash_groups.setdefault(page_hash, []).append(issue)
 
-                    doc = fitz.open(str(file_path))
-                    if len(doc) > 0:
-                        page = doc[0]
-                        pix = page.get_pixmap(
-                            matrix=fitz.Matrix(0.5, 0.5)
-                        )  # 50% scale for speed
-                        import hashlib
-
-                        page_hash = hashlib.md5(pix.tobytes("png")).hexdigest()
-                        page_hashes.append((data, page_hash))
-                    doc.close()
-                except Exception:
-                    pass
-
-            # Group by page hash
-            hash_groups: dict[str, list] = {}
-            for data, page_hash in page_hashes:
-                hash_groups.setdefault(page_hash, []).append(data)
-
-            # Only keep groups with 2+ issues
-            for group in hash_groups.values():
-                if len(group) >= 2:
-                    pdf_groups.append(group)
-
-        # Combine results
+        # Only keep groups with 2+ issues
         result = []
-        seen_ids: set[int] = set()
-
-        # Add number-based groups
-        for group in number_groups.values():
+        for group in hash_groups.values():
             if len(group) >= 2:
-                issues_in_group = [g["issue"] for g in group]
-                ids = frozenset(i["id"] for i in issues_in_group)
-                if ids not in seen_ids:
-                    seen_ids.add(ids)
-                    issues_in_group.sort(key=lambda i: i["size_bytes"], reverse=True)
-                    result.append(issues_in_group)
-
-        # Add proximity-based groups
-        for group in proximity_groups:
-            issues_in_group = [g["issue"] for g in group]
-            ids = frozenset(i["id"] for i in issues_in_group)
-            if ids not in seen_ids:
-                seen_ids.add(ids)
-                issues_in_group.sort(key=lambda i: i["size_bytes"], reverse=True)
-                result.append(issues_in_group)
-
-        # Add PDF first-page groups
-        for group in pdf_groups:
-            issues_in_group = [g["issue"] for g in group]
-            ids = frozenset(i["id"] for i in issues_in_group)
-            if ids not in seen_ids:
-                seen_ids.add(ids)
-                issues_in_group.sort(key=lambda i: i["size_bytes"], reverse=True)
-                result.append(issues_in_group)
+                group.sort(key=lambda i: i["size_bytes"], reverse=True)
+                result.append(group)
 
         return result
 
