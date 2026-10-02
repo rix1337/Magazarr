@@ -204,6 +204,7 @@ def _library_destination(settings: Settings, download, pdf: Path) -> Path:
     year, month = _issue_path_parts(
         download["issue_key"],
         _download_value(download, "release_title"),
+        pub_date=_download_value(download, "pub_date"),
         fallback_date=date.today(),
     )
     title = safe_filename(download["magazine_title"])
@@ -247,7 +248,10 @@ def _download_value(download, key: str) -> str:
 
 
 def _issue_path_parts(
-    issue_key: str, release_title: str = "", fallback_date: date | None = None
+    issue_key: str,
+    release_title: str = "",
+    pub_date: str = "",
+    fallback_date: date | None = None,
 ) -> tuple[str, str]:
     parts = str(issue_key or "").split("-")
     if len(parts) >= 2 and len(parts[0]) == 4 and len(parts[1]) == 2:
@@ -268,6 +272,13 @@ def _issue_path_parts(
         release_parts = _issue_path_parts_from_text(release_title)
         if release_parts:
             return year, release_parts[1]
+        # Try pub_date
+        if pub_date:
+            from magazarr.utils import parse_rfc822
+
+            parsed = parse_rfc822(pub_date)
+            if parsed:
+                return year, f"{parsed.month:02d}"
         # Fallback: use provided date (e.g. today) for month
         if fallback_date:
             return year, f"{fallback_date.month:02d}"
@@ -278,6 +289,13 @@ def _issue_path_parts(
     release_parts = _issue_path_parts_from_text(release_title)
     if release_parts:
         return release_parts
+    # Try pub_date
+    if pub_date:
+        from magazarr.utils import parse_rfc822
+
+        parsed = parse_rfc822(pub_date)
+        if parsed:
+            return str(parsed.year), f"{parsed.month:02d}"
     if fallback_date:
         return str(fallback_date.year), f"{fallback_date.month:02d}"
     return "unknown-year", "unknown-month"

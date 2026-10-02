@@ -5,7 +5,6 @@ import re
 import shutil
 import sqlite3
 from datetime import date, timedelta
-from hashlib import md5
 from pathlib import Path
 
 from magazarr.utils import clean_release_title, parse_issue_date
@@ -82,6 +81,7 @@ class Database:
                     status TEXT NOT NULL DEFAULT 'snatched',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    pub_date TEXT NOT NULL DEFAULT '',
                     UNIQUE(magazine_id, issue_key)
                 );
 
@@ -122,6 +122,7 @@ class Database:
             )
         self._migrate_clean_retry_suffixes()
         self._migrate_downloads_notifications_column()
+        self._migrate_downloads_pub_date_column()
         self._migrate_sort_value()
         self._migrate_fix_unknown_paths()
         self._migrate_clamp_future_dates()
@@ -157,6 +158,16 @@ class Database:
             }
             if "notifications" not in columns:
                 conn.execute("ALTER TABLE downloads ADD COLUMN notifications TEXT")
+
+    def _migrate_downloads_pub_date_column(self):
+        with self.connect() as conn:
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(downloads)")
+            }
+            if "pub_date" not in columns:
+                conn.execute(
+                    "ALTER TABLE downloads ADD COLUMN pub_date TEXT NOT NULL DEFAULT ''"
+                )
 
     def _migrate_sort_value(self):
         with self.connect() as conn:
@@ -231,9 +242,9 @@ class Database:
                         / old_path.parent.name
                         / old_path.name
                     )
-                    if new_path != old_path:
-                        new_path.parent.mkdir(parents=True, exist_ok=True)
-                        if old_path.exists():
+                    if new_path != old_path and old_path.exists():
+                        try:
+                            new_path.parent.mkdir(parents=True, exist_ok=True)
                             shutil.move(str(old_path), str(new_path))
                             conn.execute(
                                 "UPDATE issues SET file_path=? WHERE id=?",
@@ -245,6 +256,8 @@ class Database:
                                     new_path.parent / f".{new_path.stem}.cover.png"
                                 )
                                 shutil.move(str(cover_path), str(new_cover))
+                        except (OSError, PermissionError):
+                            pass
 
     def _migrate_clamp_future_dates(self):
         """Fix issues with future dates by clamping and deduplicating."""
@@ -282,16 +295,19 @@ class Database:
                 new_filename = old_path.name.replace(issue_key, new_key, 1)
                 new_path = old_path.with_name(new_filename)
                 if old_path.exists() and not new_path.exists():
-                    shutil.move(str(old_path), str(new_path))
-                    conn.execute(
-                        "UPDATE issues SET file_path=? WHERE id=?",
-                        (str(new_path), row["id"]),
-                    )
-                    sort_value = _compute_sort_value(new_key, row["release_title"])
-                    conn.execute(
-                        "UPDATE issues SET sort_value=? WHERE id=?",
-                        (sort_value, row["id"]),
-                    )
+                    try:
+                        shutil.move(str(old_path), str(new_path))
+                        conn.execute(
+                            "UPDATE issues SET file_path=? WHERE id=?",
+                            (str(new_path), row["id"]),
+                        )
+                        sort_value = _compute_sort_value(new_key, row["release_title"])
+                        conn.execute(
+                            "UPDATE issues SET sort_value=? WHERE id=?",
+                            (sort_value, row["id"]),
+                        )
+                    except (OSError, PermissionError):
+                        pass
 
     def add_magazine(self, title: str):
         clean = " ".join(title.split())
@@ -540,8 +556,8 @@ class Database:
                 """
                 INSERT INTO downloads(
                     magazine_id, issue_key, release_title, download_url,
-                    package_id, size_bytes, status
-                ) VALUES (?, ?, ?, ?, ?, ?, 'snatched')
+                    package_id, size_bytes, status, pub_date
+                ) VALUES (?, ?, ?, ?, ?, ?, 'snatched', ?)
                 """,
                 (
                     magazine_id,
@@ -550,6 +566,7 @@ class Database:
                     candidate.download_url,
                     package_id,
                     candidate.size_bytes,
+                    getattr(candidate, "pub_date", ""),
                 ),
             )
             conn.execute(
@@ -1223,22 +1240,43 @@ class Database:
                 if len(group) > 1:
                     proximity_groups.append(group)
 
-        # Group by file content (catches same file downloaded twice)
-        file_groups: dict[str, list] = {}
-        for data in issue_data:
-            file_path_str = data["issue"]["file_path"]
-            try:
-                file_path = Path(file_path_str)
-                if not file_path.exists():
-                    continue
-                size = file_path.stat().st_size
-                with open(file_path, "rb") as f:
-                    sample = f.read(min(1024 * 1024, size))
-                file_hash = md5(sample).hexdigest()
-                key = f"{size}-{file_hash}"
-                file_groups.setdefault(key, []).append(data)
-            except Exception:
-                pass
+        # Group by PDF first-page comparison (catches same content downloaded twice)
+        pdf_groups: list[list] = []
+        if len(issue_data) >= 2:
+            # Extract first-page hashes for all issues
+            page_hashes = []
+            for data in issue_data:
+                file_path_str = data["issue"]["file_path"]
+                try:
+                    file_path = Path(file_path_str)
+                    if not file_path.exists():
+                        continue
+                    # Extract first page and compute hash
+                    import fitz
+
+                    doc = fitz.open(str(file_path))
+                    if len(doc) > 0:
+                        page = doc[0]
+                        pix = page.get_pixmap(
+                            matrix=fitz.Matrix(0.5, 0.5)
+                        )  # 50% scale for speed
+                        import hashlib
+
+                        page_hash = hashlib.md5(pix.tobytes("png")).hexdigest()
+                        page_hashes.append((data, page_hash))
+                    doc.close()
+                except Exception:
+                    pass
+
+            # Group by page hash
+            hash_groups: dict[str, list] = {}
+            for data, page_hash in page_hashes:
+                hash_groups.setdefault(page_hash, []).append(data)
+
+            # Only keep groups with 2+ issues
+            for group in hash_groups.values():
+                if len(group) >= 2:
+                    pdf_groups.append(group)
 
         # Combine results
         result = []
@@ -1263,15 +1301,14 @@ class Database:
                 issues_in_group.sort(key=lambda i: i["size_bytes"], reverse=True)
                 result.append(issues_in_group)
 
-        # Add file-based groups
-        for group in file_groups.values():
-            if len(group) >= 2:
-                issues_in_group = [g["issue"] for g in group]
-                ids = frozenset(i["id"] for i in issues_in_group)
-                if ids not in seen_ids:
-                    seen_ids.add(ids)
-                    issues_in_group.sort(key=lambda i: i["size_bytes"], reverse=True)
-                    result.append(issues_in_group)
+        # Add PDF first-page groups
+        for group in pdf_groups:
+            issues_in_group = [g["issue"] for g in group]
+            ids = frozenset(i["id"] for i in issues_in_group)
+            if ids not in seen_ids:
+                seen_ids.add(ids)
+                issues_in_group.sort(key=lambda i: i["size_bytes"], reverse=True)
+                result.append(issues_in_group)
 
         return result
 
