@@ -284,6 +284,57 @@ def create_app(settings_store: SettingsStore, db, automation=None):
             )
         redirect("/")
 
+    @app.post("/api/issues/bulk-delete")
+    def bulk_delete_issues():
+        data = request.json
+        if not data or "issue_ids" not in data:
+            raise HTTPError(400, "Missing issue_ids")
+        issue_ids = data["issue_ids"]
+        deleted = 0
+        for issue_id in issue_ids:
+            issue = db.delete_issue(int(issue_id))
+            if issue:
+                path = Path(issue["file_path"])
+                try:
+                    if path.exists() and path.is_file():
+                        path.unlink()
+                except OSError:
+                    pass
+                deleted += 1
+        db.record_event("info", "library", f"Bulk deleted {deleted} issue(s)", "")
+        return json_response({"deleted": deleted})
+
+    @app.get("/library")
+    def library_view():
+        magazines = db.magazines()
+        return page("Library", library_page(magazines))
+
+    @app.get("/api/library/issues")
+    def library_issues_api():
+        magazine_id = request.query.get("magazine_id")
+        limit = int(request.query.get("limit", 500))
+        offset = int(request.query.get("offset", 0))
+        rows = db.issues(
+            limit=limit,
+            offset=offset,
+            magazine_id=int(magazine_id) if magazine_id else None,
+        )
+        items = []
+        for row in rows:
+            items.append(
+                {
+                    "id": row["id"],
+                    "magazine_id": row["magazine_id"],
+                    "magazine_title": row["magazine_title"],
+                    "issue_key": clean_release_title(row["issue_key"]),
+                    "release_title": clean_release_title(row["release_title"]),
+                    "cover_url": f"/opds?cmd=Cover&issueid={row['id']}",
+                    "size_bytes": row["size_bytes"],
+                    "acquired_at": row["acquired_at"],
+                }
+            )
+        return json_response({"items": items})
+
     @app.post("/magazines/<magazine_id:int>/blacklist")
     def add_blacklist_term(magazine_id):
         db.add_blacklist_term(magazine_id, str(request.forms.get("term", "")))
@@ -374,6 +425,7 @@ def dashboard(settings, db) -> str:
           <span>v{__version__}</span>
         </div>
         <nav class="top-actions">
+          <a class="button-link secondary" href="/library">Library</a>
           <button class="secondary" type="button" data-open-downloads>Downloads</button>
           <a class="button-link secondary" href="/opds">OPDS</a>
           <button class="secondary" type="button" data-open-settings>Settings</button>
@@ -406,6 +458,49 @@ def dashboard(settings, db) -> str:
     {magazine_modal()}
     {job_modal()}
     {confirm_modal()}
+    """
+
+
+def library_page(magazines) -> str:
+    return f"""
+    <section class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <a class="brand-link" href="/">
+            <img class="brand-logo" src="/static/magazarr-logo.png" alt="Magazarr">
+            <h1 class="sr-only">Magazarr</h1>
+          </a>
+          <span>v{__version__}</span>
+        </div>
+        <nav class="top-actions">
+          <a class="button-link secondary" href="/">Dashboard</a>
+        </nav>
+      </div>
+    </section>
+
+    <main class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Library</h2>
+          <div class="toolbar">
+            <select id="library-mag-filter">
+              <option value="">All magazines</option>
+              {"".join(f'<option value="{m["id"]}">{html.escape(m["title"])}</option>' for m in magazines)}
+            </select>
+            <button id="library-select-all" class="secondary" type="button">Select All</button>
+            <button id="library-deselect-all" class="secondary" type="button">Deselect All</button>
+            <button id="library-bulk-delete" type="button">Delete Selected</button>
+            <span id="library-selected-count" class="muted"></span>
+          </div>
+        </div>
+        <div id="library-grid" class="library-grid"></div>
+      </section>
+    </main>
+
+    {confirm_modal()}
+    <script>
+    {library_script()}
+    </script>
     """
 
 
@@ -889,6 +984,101 @@ def download_card_payload(settings, item, download):
 
 def quasarr_public_url(settings) -> str:
     return (settings.quasarr_external_url or settings.quasarr_url).rstrip("/")
+
+
+def library_script() -> str:
+    return """
+(() => {
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+
+  const grid = document.getElementById("library-grid");
+  const filter = document.getElementById("library-mag-filter");
+  const selectAll = document.getElementById("library-select-all");
+  const deselectAll = document.getElementById("library-deselect-all");
+  const bulkDelete = document.getElementById("library-bulk-delete");
+  const countEl = document.getElementById("library-selected-count");
+  const confirmModal = document.getElementById("confirm-modal");
+  const confirmMessage = document.getElementById("confirm-message");
+  const confirmAccept = document.getElementById("confirm-accept");
+  let selectedIds = new Set();
+
+  async function loadIssues() {
+    const magId = filter.value;
+    const params = new URLSearchParams({ limit: 500 });
+    if (magId) params.set("magazine_id", magId);
+    const res = await fetch(`/api/library/issues?${params}`);
+    const data = await res.json();
+    grid.innerHTML = "";
+    selectedIds.clear();
+    updateCount();
+    for (const item of data.items) {
+      const card = document.createElement("div");
+      card.className = "lib-card";
+      card.dataset.id = item.id;
+      card.innerHTML = `
+        <div class="lib-cover"><img src="${esc(item.cover_url)}" alt="" loading="lazy"></div>
+        <div class="lib-check"><input type="checkbox" data-issue-id="${item.id}"></div>
+        <div class="lib-info">
+          <div class="lib-title">${esc(item.issue_key || item.release_title)}</div>
+          <div class="lib-mag muted">${esc(item.magazine_title)}</div>
+        </div>`;
+      card.querySelector("input").addEventListener("change", (e) => {
+        if (e.target.checked) selectedIds.add(item.id);
+        else selectedIds.delete(item.id);
+        card.classList.toggle("selected", e.target.checked);
+        updateCount();
+      });
+      grid.append(card);
+    }
+  }
+
+  function updateCount() {
+    countEl.textContent = selectedIds.size ? `${selectedIds.size} selected` : "";
+    bulkDelete.disabled = selectedIds.size === 0;
+  }
+
+  selectAll.addEventListener("click", () => {
+    grid.querySelectorAll("input[type=checkbox]").forEach(cb => {
+      cb.checked = true;
+      selectedIds.add(Number(cb.dataset.issueId));
+      cb.closest(".lib-card").classList.add("selected");
+    });
+    updateCount();
+  });
+
+  deselectAll.addEventListener("click", () => {
+    grid.querySelectorAll("input[type=checkbox]").forEach(cb => {
+      cb.checked = false;
+      cb.closest(".lib-card").classList.remove("selected");
+    });
+    selectedIds.clear();
+    updateCount();
+  });
+
+  bulkDelete.addEventListener("click", () => {
+    if (!selectedIds.size) return;
+    confirmMessage.textContent = `Delete ${selectedIds.size} issue(s)? This cannot be undone.`;
+    confirmModal.showModal();
+    const handler = async () => {
+      confirmAccept.removeEventListener("click", handler);
+      try {
+        await fetch("/api/issues/bulk-delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ issue_ids: [...selectedIds] }),
+        });
+        await loadIssues();
+      } catch (e) { console.error(e); }
+    };
+    confirmAccept.addEventListener("click", handler);
+  });
+
+  filter.addEventListener("change", loadIssues);
+  loadIssues();
+})();
+"""
 
 
 def page_script() -> str:
@@ -1877,6 +2067,69 @@ def page(title: str, body: str) -> str:
       padding: 16px;
       min-width: 0;
       align-items: start;
+    }}
+    .library-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }}
+    .lib-card {{
+      position: relative;
+      border: 2px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--panel);
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+      cursor: pointer;
+    }}
+    .lib-card:hover {{
+      border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+    }}
+    .lib-card.selected {{
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+    }}
+    .lib-cover {{
+      aspect-ratio: 210 / 297;
+      overflow: hidden;
+      background: var(--soft);
+    }}
+    .lib-cover img {{
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }}
+    .lib-check {{
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      z-index: 2;
+    }}
+    .lib-check input {{
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }}
+    .lib-info {{
+      padding: 6px 8px 8px;
+    }}
+    .lib-title {{
+      font-weight: 650;
+      font-size: 12px;
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    .lib-mag {{
+      font-size: 11px;
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }}
     .mag-cover-block {{
       width: 116px;
