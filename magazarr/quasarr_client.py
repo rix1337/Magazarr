@@ -9,7 +9,8 @@ import requests
 from magazarr.version import get_version
 
 USER_AGENT = f"Magazarr/{get_version()}"
-TIMEOUT = 60
+TIMEOUT = 30
+SHORT_TIMEOUT = 5
 SEARCH_PAGE_LIMIT = 100
 
 
@@ -86,21 +87,21 @@ class QuasarrClient:
             return []
         return [str(item) for item in data.get("nzo_ids", []) if item]
 
-    def history(self) -> list[dict]:
+    def history(self, timeout: int | None = None) -> list[dict]:
         response = self.session.get(
             urljoin(self.base_url, "api"),
             params={"mode": "history", "apikey": self.api_key},
-            timeout=TIMEOUT,
+            timeout=timeout or TIMEOUT,
         )
         response.raise_for_status()
         data = response.json()
         return list(data.get("history", {}).get("slots", []))
 
-    def queue(self) -> list[dict]:
+    def queue(self, timeout: int | None = None) -> list[dict]:
         response = self.session.get(
             urljoin(self.base_url, "api"),
             params={"mode": "queue", "apikey": self.api_key},
-            timeout=TIMEOUT,
+            timeout=timeout or TIMEOUT,
         )
         response.raise_for_status()
         data = response.json()

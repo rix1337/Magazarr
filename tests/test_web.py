@@ -32,7 +32,9 @@ def test_missing_quasarr_download_becomes_error_and_skipped(tmp_path, monkeypatc
         42,
         "missing-package",
     )
-    monkeypatch.setattr(web, "fetch_quasarr_downloads", lambda settings: ([], []))
+    monkeypatch.setattr(
+        web, "fetch_quasarr_downloads", lambda settings, timeout=None: ([], [])
+    )
 
     payload = download_status_payload(db, Settings(), magazine_id=magazine["id"])
 
@@ -131,7 +133,7 @@ def test_download_status_includes_quasarr_queue_and_history(tmp_path, monkeypatc
     monkeypatch.setattr(
         web,
         "fetch_quasarr_downloads",
-        lambda settings: (
+        lambda settings, timeout=None: (
             [
                 {
                     "nzo_id": "Quasarr_docs_456",
@@ -181,7 +183,7 @@ def test_download_status_matches_history_uuid_by_title(tmp_path, monkeypatch):
     monkeypatch.setattr(
         web,
         "fetch_quasarr_downloads",
-        lambda settings: (
+        lambda settings, timeout=None: (
             [],
             [
                 {
@@ -218,7 +220,7 @@ def test_active_download_count_uses_queue_and_history(tmp_path, monkeypatch):
     monkeypatch.setattr(
         web,
         "fetch_quasarr_downloads",
-        lambda settings: (
+        lambda settings, timeout=None: (
             [],
             [
                 {
@@ -231,7 +233,9 @@ def test_active_download_count_uses_queue_and_history(tmp_path, monkeypatch):
         ),
     )
 
-    assert active_download_counts(db, Settings()) == {magazine["id"]: 1}
+    counts, timed_out = active_download_counts(db, Settings())
+    assert counts == {magazine["id"]: 1}
+    assert timed_out is False
 
 
 def test_active_download_count_skips_quasarr_without_pending_downloads(
@@ -244,12 +248,14 @@ def test_active_download_count_skips_quasarr_without_pending_downloads(
     db.migrate()
     db.add_magazine("Magazine Title")
 
-    def fail_fetch(settings):
+    def fail_fetch(settings, timeout=None):
         raise AssertionError("Quasarr should not be queried")
 
     monkeypatch.setattr(web, "fetch_quasarr_downloads", fail_fetch)
 
-    assert active_download_counts(db, Settings()) == {}
+    counts, timed_out = active_download_counts(db, Settings())
+    assert counts == {}
+    assert timed_out is False
 
 
 def test_download_status_skips_quasarr_without_pending_downloads(tmp_path, monkeypatch):
@@ -268,7 +274,7 @@ def test_download_status_skips_quasarr_without_pending_downloads(tmp_path, monke
         None,
     )
 
-    def fail_fetch(settings):
+    def fail_fetch(settings, timeout=None):
         raise AssertionError("Quasarr should not be queried")
 
     monkeypatch.setattr(web, "fetch_quasarr_downloads", fail_fetch)

@@ -249,9 +249,6 @@ def issue_aliases(
         aliases.add(issue.key)
         if issue.value:
             aliases.add(f"date:{issue.value.isoformat()}")
-            iso = issue.value.isocalendar()
-            aliases.add(f"week:{iso[0]}-{iso[1]:02d}")
-            aliases.add(f"month:{issue.value.year}-{issue.value.month:02d}")
 
     number = parse_issue_number(title)
     if number:

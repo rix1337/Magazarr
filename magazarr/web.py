@@ -197,6 +197,7 @@ def create_app(settings_store: SettingsStore, db, automation=None):
     @app.get("/api/dashboard")
     def dashboard_api():
         settings = settings_store.load()
+        counts, timed_out = active_download_counts(db, settings)
         return json_response(
             {
                 "magazines": magazine_rows(
@@ -205,8 +206,9 @@ def create_app(settings_store: SettingsStore, db, automation=None):
                     if hasattr(db, "blacklist_terms_by_magazine")
                     else {},
                     db,
-                    active_download_counts(db, settings),
-                )
+                    counts,
+                ),
+                "quasarr_timeout": timed_out,
             }
         )
 
@@ -361,7 +363,6 @@ def dashboard(settings, db) -> str:
         if hasattr(db, "blacklist_terms_by_magazine")
         else {}
     )
-    downloading_counts = active_download_counts(db, settings)
     return f"""
     <section class="topbar">
       <div class="topbar-inner">
@@ -395,7 +396,7 @@ def dashboard(settings, db) -> str:
           </div>
         </div>
         <div class="mag-list">
-          {magazine_rows(magazines, blacklist, db, downloading_counts)}
+          {magazine_rows(magazines, blacklist, db, {})}
         </div>
       </section>
     </main>
@@ -468,21 +469,25 @@ def magazine_rows(magazines, blacklist, db, downloading_counts=None) -> str:
     return "".join(rows) or '<div class="empty">No magazines.</div>'
 
 
-def active_download_counts(db, settings) -> dict[int, int]:
+def active_download_counts(db, settings) -> tuple[dict[int, int], bool]:
     downloads = list(db.downloads())
     if not _has_pending_downloads(downloads):
-        return {}
+        return {}, False
     by_package, by_title = _download_match_indexes(downloads)
     counts: dict[int, int] = {}
+    timed_out = False
     try:
-        queue, history = fetch_quasarr_downloads(settings)
+        from magazarr.quasarr_client import SHORT_TIMEOUT
+
+        queue, history = fetch_quasarr_downloads(settings, timeout=SHORT_TIMEOUT)
         sync_download_errors(db, settings, downloads, queue, history)
     except Exception:
+        timed_out = True
         for row in downloads:
             if row["status"] in {"snatched", "completed"}:
                 magazine_id = row["magazine_id"]
                 counts[magazine_id] = counts.get(magazine_id, 0) + 1
-        return counts
+        return counts, timed_out
 
     seen = set()
     for item in [*queue, *history]:
@@ -495,7 +500,7 @@ def active_download_counts(db, settings) -> dict[int, int]:
         seen.add(download_id)
         magazine_id = download["magazine_id"]
         counts[magazine_id] = counts.get(magazine_id, 0) + 1
-    return counts
+    return counts, timed_out
 
 
 def magazine_cover(mag) -> str:
@@ -761,7 +766,9 @@ def download_status_payload(db, settings, magazine_id: int | None = None):
         return {"active": [], "error": "", "quasarr_url": quasarr_public_url(settings)}
     by_package, by_title = _download_match_indexes(downloads)
     try:
-        queue, history = fetch_quasarr_downloads(settings)
+        from magazarr.quasarr_client import SHORT_TIMEOUT
+
+        queue, history = fetch_quasarr_downloads(settings, timeout=SHORT_TIMEOUT)
         sync_download_errors(db, settings, downloads, queue, history)
     except Exception as exc:
         return {
@@ -1018,6 +1025,20 @@ def page_script() -> str:
       const data = await res.json();
       if (typeof data.magazines === "string") {
         magList.innerHTML = data.magazines;
+      }
+      let banner = document.getElementById("quasarr-timeout-banner");
+      if (data.quasarr_timeout) {
+        if (!banner) {
+          banner = document.createElement("div");
+          banner.id = "quasarr-timeout-banner";
+          banner.style.cssText = "background:#b45309;color:#fff;padding:10px 18px;text-align:center;font-weight:600;font-size:13px;";
+          const layout = document.querySelector(".layout");
+          layout?.parentElement?.insertBefore(banner, layout);
+        }
+        banner.textContent = "Quasarr connection timed out. Download counts may be inaccurate.";
+        banner.hidden = false;
+      } else if (banner) {
+        banner.hidden = true;
       }
       loadDuplicateCounts();
     } catch (error) {

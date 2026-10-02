@@ -7,9 +7,11 @@ from magazarr.quasarr_client import QuasarrClient
 from magazarr.settings import Settings
 
 
-def fetch_quasarr_downloads(settings: Settings) -> tuple[list[dict], list[dict]]:
+def fetch_quasarr_downloads(
+    settings: Settings, timeout: int | None = None
+) -> tuple[list[dict], list[dict]]:
     client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
-    return client.queue(), client.history()
+    return client.queue(timeout=timeout), client.history(timeout=timeout)
 
 
 def sync_download_errors(

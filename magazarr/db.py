@@ -1146,47 +1146,98 @@ class Database:
     def find_duplicates(self, magazine_id: int) -> list[list[sqlite3.Row]]:
         """Find groups of duplicate issues for a magazine.
 
-        Duplicates are issues that share the same issue number or
-        have overlapping week/month aliases.
+        Uses both issue-number matching and date-proximity detection.
+        Calculates the median interval between issues to determine
+        expected publication frequency, then flags issues within 60%
+        of that interval as potential duplicates.
         """
-        from magazarr.utils import issue_aliases, parse_issue_number
+
+        from magazarr.utils import parse_issue_date, parse_issue_number
 
         issues = self.issues(limit=-1, magazine_id=magazine_id)
-        groups: dict[str, list[sqlite3.Row]] = {}
+        if len(issues) < 2:
+            return []
+
+        # Parse dates and issue numbers for all issues
+        issue_data = []
         for issue in issues:
-            aliases = issue_aliases(issue["release_title"], "", None)
-            number = parse_issue_number(issue["release_title"])
-            if number:
-                if number.year:
-                    aliases.add(f"{number.year}-issue-{number.number:04d}")
-                aliases.add(f"issue-{number.number:04d}")
-            for alias in aliases:
-                if (
-                    alias.startswith("week:")
-                    or alias.startswith("month:")
-                    or alias.startswith("issue-")
-                    or "-issue-" in alias
-                ):
-                    groups.setdefault(alias, []).append(issue)
+            parsed_date = parse_issue_date(issue["release_title"])
+            issue_number = parse_issue_number(issue["release_title"])
+            issue_data.append(
+                {
+                    "issue": issue,
+                    "date": parsed_date.value if parsed_date else None,
+                    "number": issue_number.number if issue_number else None,
+                    "year": issue_number.year if issue_number else None,
+                }
+            )
+
+        # Group by issue number (catches ct-style duplicates)
+        number_groups: dict[str, list] = {}
+        for data in issue_data:
+            if data["number"] is not None:
+                key = f"{data['year'] or 0}-issue-{data['number']:04d}"
+                number_groups.setdefault(key, []).append(data)
+
+        # Calculate median interval for date-based detection
+        dated_issues = sorted(
+            [d for d in issue_data if d["date"] is not None], key=lambda x: x["date"]
+        )
+        median_interval = None
+        if len(dated_issues) >= 3:
+            intervals = []
+            for i in range(1, len(dated_issues)):
+                delta = (dated_issues[i]["date"] - dated_issues[i - 1]["date"]).days
+                if delta > 0:
+                    intervals.append(delta)
+            if intervals:
+                intervals.sort()
+                median_interval = intervals[len(intervals) // 2]
+
+        # Group by date proximity (catches GameStar/Der Spiegel-style duplicates)
+        proximity_groups: list[list] = []
+        if median_interval and len(dated_issues) >= 2:
+            threshold = max(1, int(median_interval * 0.6))
+            used = set()
+            for i, data1 in enumerate(dated_issues):
+                if i in used:
+                    continue
+                group = [data1]
+                used.add(i)
+                for j, data2 in enumerate(dated_issues[i + 1 :], start=i + 1):
+                    if j in used:
+                        continue
+                    delta = abs((data2["date"] - data1["date"]).days)
+                    if delta <= threshold:
+                        group.append(data2)
+                        used.add(j)
+                if len(group) > 1:
+                    proximity_groups.append(group)
+
+        # Combine results
         result = []
         seen_ids: set[int] = set()
-        for _alias, group in sorted(groups.items(), key=lambda x: x[0]):
-            unique = []
-            for issue in group:
-                if issue["id"] not in seen_ids:
-                    unique.append(issue)
-                    seen_ids.add(issue["id"])
-            if len(unique) >= 2:
-                unique.sort(key=lambda i: i["size_bytes"], reverse=True)
-                result.append(unique)
-        deduped: list[list[sqlite3.Row]] = []
-        seen_group_ids: set[frozenset[int]] = set()
-        for group in result:
-            key = frozenset(i["id"] for i in group)
-            if key not in seen_group_ids:
-                seen_group_ids.add(key)
-                deduped.append(group)
-        return deduped
+
+        # Add number-based groups
+        for group in number_groups.values():
+            if len(group) >= 2:
+                issues_in_group = [g["issue"] for g in group]
+                ids = frozenset(i["id"] for i in issues_in_group)
+                if ids not in seen_ids:
+                    seen_ids.add(ids)
+                    issues_in_group.sort(key=lambda i: i["size_bytes"], reverse=True)
+                    result.append(issues_in_group)
+
+        # Add proximity-based groups
+        for group in proximity_groups:
+            issues_in_group = [g["issue"] for g in group]
+            ids = frozenset(i["id"] for i in issues_in_group)
+            if ids not in seen_ids:
+                seen_ids.add(ids)
+                issues_in_group.sort(key=lambda i: i["size_bytes"], reverse=True)
+                result.append(issues_in_group)
+
+        return result
 
     def delete_duplicate_issues(self, magazine_id: int) -> int:
         """Delete duplicate issues, keeping the largest file in each group."""
