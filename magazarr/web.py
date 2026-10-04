@@ -697,12 +697,19 @@ def settings_modal(settings) -> str:
           </fieldset>
           <fieldset class="settings-card settings-wide">
             <legend>Notifications</legend>
-            {input_row("Discord Webhook URL", "discord_webhook_url", settings.discord_webhook_url, "password")}
-            <h3><img src="/static/pushover-icon.png" alt="Pushover logo" width="24" height="24" style="vertical-align: middle"> Pushover (optional)</h3>
-            {input_row("Application API Token", "pushover_api_token", settings.pushover_api_token, "password")}
-            {input_row("User or Group Key", "pushover_user_key", settings.pushover_user_key, "password")}
-            <p>Leave both Pushover fields blank to disable it. Download starts are silent; imports and errors use normal alerts.</p>
-            <button type="submit" class="secondary" formaction="/notifications/pushover/test">Save and Send Pushover Test</button>
+            <div class="notification-providers">
+              <section class="notification-provider">
+                <h3 class="notification-provider-title"><img src="/static/discord-icon.png" alt="Discord logo" width="20" height="20"> Discord</h3>
+                {input_row("Webhook URL", "discord_webhook_url", settings.discord_webhook_url, "password")}
+              </section>
+              <section class="notification-provider">
+                <h3 class="notification-provider-title"><img src="/static/pushover-icon.png" alt="Pushover logo" width="20" height="20"> Pushover</h3>
+                {input_row("API Token", "pushover_api_token", settings.pushover_api_token, "password")}
+                {input_row("User or Group Key", "pushover_user_key", settings.pushover_user_key, "password")}
+                <button type="submit" class="secondary" formaction="/notifications/pushover/test">Save and Test</button>
+              </section>
+            </div>
+            <p class="muted">Download starts are silent; imports and errors use normal alerts.</p>
           </fieldset>
         </div>
         <div class="settings-footer">
@@ -2356,6 +2363,37 @@ def page(title: str, body: str) -> str:
       min-height: 36px;
       background: color-mix(in srgb, var(--panel) 90%, var(--bg) 10%);
     }}
+    .notification-providers {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }}
+    .notification-provider {{
+      min-width: 0;
+    }}
+    .notification-provider-title {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      color: var(--fg);
+      font-size: 14px;
+      line-height: 20px;
+    }}
+    .notification-provider-title img {{
+      width: 20px;
+      height: 20px;
+    }}
+    .settings-card .notification-provider label {{
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      margin: 12px 0 0;
+    }}
+    .notification-provider button {{
+      margin-top: 12px;
+    }}
     .settings-wide {{
       grid-column: 1 / -1;
     }}
@@ -2505,6 +2543,9 @@ def page(title: str, body: str) -> str:
         width: 100%;
       }}
       .settings-grid {{
+        grid-template-columns: 1fr;
+      }}
+      .notification-providers {{
         grid-template-columns: 1fr;
       }}
       .settings-wide {{

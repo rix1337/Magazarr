@@ -69,15 +69,27 @@ def test_invalid_credentials_do_not_save_settings(tmp_path, token, key):
     assert store.path.read_text() == before
 
 
-def test_settings_form_has_optional_secret_fields_and_static_icon():
+def test_settings_form_has_matching_provider_sections_and_static_icons():
     rendered = settings_modal(Settings(pushover_api_token='synthetic"<token'))
     assert 'name="pushover_api_token"' in rendered
     assert 'name="pushover_user_key"' in rendered
     assert 'type="password" name="pushover_api_token"' in rendered
     assert 'value="synthetic&quot;&lt;token"' in rendered
+    assert 'src="/static/discord-icon.png"' in rendered
     assert 'src="/static/pushover-icon.png"' in rendered
     assert 'formaction="/notifications/pushover/test"' in rendered
-    assert "Leave both Pushover fields blank" in rendered
+    assert 'class="notification-providers"' in rendered
+    assert 'class="notification-provider-title"' in rendered
+    assert "> Discord</h3>" in rendered
+    assert "> Pushover</h3>" in rendered
+    assert "Webhook URL" in rendered
+    assert "API Token" in rendered
+    assert "Save and Test" in rendered
+    assert "(optional)" not in rendered
+    assert "Leave both" not in rendered
+    assert (
+        "Download starts are silent; imports and errors use normal alerts." in rendered
+    )
     assert "required" not in rendered
 
 
