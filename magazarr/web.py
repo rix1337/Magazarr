@@ -10,7 +10,7 @@ from loguru import logger
 
 from magazarr.downloads import fetch_quasarr_downloads, sync_download_errors
 from magazarr.importer import import_completed
-from magazarr.notifications import notify_download_started
+from magazarr.notifications import notify_download_started, send_pushover
 from magazarr.opds import handle_opds
 from magazarr.quasarr_client import QuasarrClient
 from magazarr.search import search_all, search_magazine
@@ -40,7 +40,30 @@ def create_app(settings_store: SettingsStore, db, automation=None):
 
     @app.post("/settings")
     def save_settings():
-        settings_store.update_from_form(request.forms)
+        try:
+            settings_store.update_from_form(request.forms)
+        except ValueError as exc:
+            raise HTTPError(400, str(exc)) from exc
+        redirect("/")
+
+    @app.post("/notifications/pushover/test")
+    def test_pushover():
+        try:
+            settings = settings_store.update_from_form(request.forms)
+        except ValueError as exc:
+            raise HTTPError(400, str(exc)) from exc
+        if not settings.pushover_api_token or not settings.pushover_user_key:
+            raise HTTPError(
+                400, "Configure a Pushover API token and user or group key first"
+            )
+        if not send_pushover(
+            settings,
+            "Magazarr Notification Test",
+            "Pushover notifications are configured.",
+            image_path=asset_root() / "magazarr-icon.png",
+            silent=False,
+        ):
+            raise HTTPError(502, "Failed to send Pushover test notification")
         redirect("/")
 
     @app.post("/magazines")
@@ -675,6 +698,11 @@ def settings_modal(settings) -> str:
           <fieldset class="settings-card settings-wide">
             <legend>Notifications</legend>
             {input_row("Discord Webhook URL", "discord_webhook_url", settings.discord_webhook_url, "password")}
+            <h3><img src="/static/pushover-icon.png" alt="Pushover logo" width="24" height="24" style="vertical-align: middle"> Pushover (optional)</h3>
+            {input_row("Application API Token", "pushover_api_token", settings.pushover_api_token, "password")}
+            {input_row("User or Group Key", "pushover_user_key", settings.pushover_user_key, "password")}
+            <p>Leave both Pushover fields blank to disable it. Download starts are silent; imports and errors use normal alerts.</p>
+            <button type="submit" class="secondary" formaction="/notifications/pushover/test">Save and Send Pushover Test</button>
           </fieldset>
         </div>
         <div class="settings-footer">

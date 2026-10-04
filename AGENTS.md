@@ -13,3 +13,12 @@ uv run pre-commit.py
 ```
 
 CI runs it automatically with `--ci` which auto-fixes and pushes any changes.
+
+## Notifications
+
+- `magazarr/settings.py` stores optional Discord and Pushover credentials in the existing JSON settings. Pushover is disabled when both fields are blank; configuring it requires a 30-character alphanumeric application token and user or group key.
+- `magazarr/web.py` owns the settings form and Pushover test route. Tests save the form before sending a normal alert. Icons are PNG assets served through `/static/`.
+- `magazarr/notifications.py` sends download starts silently and imports/errors with normal alerts to each configured provider independently. Import notifications reuse the extracted PDF cover, with Pushover attachments limited to 5 MiB and text fallback when the cover cannot be attached.
+- Discord message references remain the only persisted tracking state. Pushover sends a new message for each lifecycle event.
+- Keep notification setup optional. Preserve existing Discord tracking and return contracts when adding providers.
+- Notification tests use mocked HTTP requests and synthetic titles and URLs. Run `uv run pytest` for verification.

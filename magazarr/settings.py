@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -18,6 +19,8 @@ class Settings:
     quasarr_external_url: str = ""
     quasarr_api_key: str = ""
     discord_webhook_url: str = ""
+    pushover_api_token: str = ""
+    pushover_user_key: str = ""
     quasarr_search_category: str = "7000"
     quasarr_download_category: str = "docs"
     past_days: int = 45
@@ -65,6 +68,25 @@ class SettingsStore:
         )
         settings.quasarr_api_key = str(form.get("quasarr_api_key", "")).strip()
         settings.discord_webhook_url = str(form.get("discord_webhook_url", "")).strip()
+        settings.pushover_api_token = str(
+            form.get("pushover_api_token", settings.pushover_api_token)
+        ).strip()
+        settings.pushover_user_key = str(
+            form.get("pushover_user_key", settings.pushover_user_key)
+        ).strip()
+        if settings.pushover_api_token or settings.pushover_user_key:
+            if not settings.pushover_api_token or not settings.pushover_user_key:
+                raise ValueError(
+                    "Pushover requires both an API token and a user or group key"
+                )
+            if not re.fullmatch(r"[A-Za-z0-9]{30}", settings.pushover_api_token):
+                raise ValueError(
+                    "Pushover API token must contain 30 alphanumeric characters"
+                )
+            if not re.fullmatch(r"[A-Za-z0-9]{30}", settings.pushover_user_key):
+                raise ValueError(
+                    "Pushover user or group key must contain 30 alphanumeric characters"
+                )
         settings.quasarr_search_category = str(
             form.get("quasarr_search_category", "7000")
         ).strip()

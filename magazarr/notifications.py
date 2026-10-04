@@ -13,6 +13,11 @@ from magazarr.settings import Settings
 
 DISCORD_SUPPRESS_NOTIFICATIONS = 1 << 12
 DISCORD_TIMEOUT_SECONDS = 15
+PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
+PUSHOVER_TIMEOUT_SECONDS = 15
+PUSHOVER_MAX_TITLE_LENGTH = 250
+PUSHOVER_MAX_MESSAGE_LENGTH = 1024
+PUSHOVER_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 
 
 def notify_download_started(
@@ -21,12 +26,11 @@ def notify_download_started(
     release_title: str,
     package_id: str | None = None,
 ) -> dict | None:
-    """Send a silent tracked Discord message when a download starts.
+    """Send silent tracked Discord and Pushover messages when download starts.
 
-    Returns a reference dict that can later be passed to ``notify_import_success``
-    or ``notify_error`` to edit the message in place.
+    Return Discord reference for later edits, if Discord delivery succeeds.
     """
-    return send_tracked_discord(
+    reference = send_tracked_discord(
         settings,
         "Download started",
         release_title,
@@ -36,6 +40,17 @@ def notify_download_started(
         },
         silent=True,
     )
+    send_pushover(
+        settings,
+        "Download started",
+        release_title,
+        fields={
+            "Magazine": magazine_title,
+            "Package": package_id or "unknown",
+        },
+        silent=True,
+    )
+    return reference
 
 
 def notify_import_success(
@@ -58,7 +73,7 @@ def notify_import_success(
         "File": str(file_path),
     }
     if reference:
-        return edit_discord(
+        discord_success = edit_discord(
             settings,
             reference,
             "Import completed",
@@ -67,7 +82,16 @@ def notify_import_success(
             image_path=cover_path,
             silent=False,
         )
-    return send_discord(
+    else:
+        discord_success = send_discord(
+            settings,
+            "Import completed",
+            release_title,
+            fields=fields,
+            image_path=cover_path,
+            silent=False,
+        )
+    pushover_success = send_pushover(
         settings,
         "Import completed",
         release_title,
@@ -75,6 +99,7 @@ def notify_import_success(
         image_path=cover_path,
         silent=False,
     )
+    return discord_success or pushover_success
 
 
 def notify_error(
@@ -114,14 +139,84 @@ def notify_error(
                 fields=fields,
                 silent=False,
             )
-        return edited
-    return send_discord(
+        discord_success = edited
+    else:
+        discord_success = send_discord(
+            settings,
+            title,
+            message,
+            fields=fields,
+            silent=False,
+        )
+    pushover_success = send_pushover(
         settings,
         title,
         message,
         fields=fields,
         silent=False,
     )
+    return discord_success or pushover_success
+
+
+def send_pushover(
+    settings: Settings,
+    title: str,
+    description: str,
+    *,
+    fields: dict[str, str] | None = None,
+    image_path: str | Path | None = None,
+    silent: bool = False,
+) -> bool:
+    """Send one Pushover notification. Return True only on API success."""
+    api_token = str(getattr(settings, "pushover_api_token", "") or "").strip()
+    user_key = str(getattr(settings, "pushover_user_key", "") or "").strip()
+    if not api_token or not user_key:
+        return False
+
+    message_parts = [str(description)]
+    message_parts.extend(
+        f"{name}: {value or '-'}" for name, value in (fields or {}).items()
+    )
+    payload = {
+        "token": api_token,
+        "user": user_key,
+        "title": str(title)[:PUSHOVER_MAX_TITLE_LENGTH],
+        "message": "\n".join(message_parts)[:PUSHOVER_MAX_MESSAGE_LENGTH],
+        "priority": -1 if silent else 0,
+    }
+
+    attachment = None
+    if image_path:
+        try:
+            path = Path(image_path)
+            if path.is_file() and path.stat().st_size <= PUSHOVER_MAX_ATTACHMENT_BYTES:
+                image_bytes = path.read_bytes()
+                if image_bytes and len(image_bytes) <= PUSHOVER_MAX_ATTACHMENT_BYTES:
+                    attachment = ("cover.png", image_bytes, COVER_MIME)
+        except (OSError, ValueError):
+            attachment = None
+
+    try:
+        response = requests.post(
+            PUSHOVER_API_URL,
+            data=payload,
+            files={"attachment": attachment} if attachment else None,
+            timeout=PUSHOVER_TIMEOUT_SECONDS,
+        )
+        if response.status_code != 200:
+            logger.warning("Pushover notification failed with HTTP error")
+            return False
+        try:
+            result = response.json()
+        except (TypeError, ValueError):
+            result = None
+        if not isinstance(result, dict) or result.get("status") != 1:
+            logger.warning("Pushover notification failed with API error")
+            return False
+        return True
+    except Exception:
+        logger.warning("Pushover notification request failed")
+        return False
 
 
 def send_discord(
