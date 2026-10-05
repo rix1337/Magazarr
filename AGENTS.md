@@ -13,6 +13,7 @@ uv run pre-commit.py
 ```
 
 CI runs it automatically with `--ci` which auto-fixes and pushes any changes.
+Release CI on `main` keeps the committed version; version comparison and bumps apply to local runs and pull-request CI.
 
 ## Notifications
 

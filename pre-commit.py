@@ -53,6 +53,10 @@ def task_version_bump():
     print("\n🏷️  --- 3. VERSION CHECK ---")
     new_v = ""
 
+    if get_env("CI") and get_env("GITHUB_REF") == "refs/heads/main":
+        print("ℹ️  Release CI on main keeps the committed version.")
+        return False, new_v
+
     def get_ver(content):
         m = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
         return m.group(1) if m else None
