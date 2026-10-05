@@ -59,12 +59,81 @@ def test_success_sets_priority_and_bounds_fields(monkeypatch):
         silent=True,
     )
     payload = calls[0][1]["data"]
-    assert payload["priority"] == -1
+    assert payload["priority"] == -2
+    assert payload["html"] == 1
     assert len(payload["title"]) == PUSHOVER_MAX_TITLE_LENGTH
     assert len(payload["message"]) == PUSHOVER_MAX_MESSAGE_LENGTH
 
     assert send_pushover(settings, "Synthetic title", "Synthetic message", silent=False)
     assert calls[1][1]["data"]["priority"] == 0
+
+
+def test_message_uses_escaped_html_fields_and_title_once(monkeypatch):
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(kwargs)
+        return Response(json_data={"status": 1})
+
+    monkeypatch.setattr("magazarr.notifications.requests.post", fake_post)
+
+    assert send_pushover(
+        pushover_settings(),
+        'Synthetic <title> & "quoted"',
+        'Description <unsafe> & "quoted"',
+        fields={"Field <name>": 'Value & "quoted"', "Later": "kept"},
+    )
+
+    payload = calls[0]["data"]
+    assert payload["title"] == 'Synthetic <title> & "quoted"'
+    assert payload["message"] == (
+        "Description &lt;unsafe&gt; &amp; &quot;quoted&quot;\n\n"
+        "<b>Field &lt;name&gt;:</b>\nValue &amp; &quot;quoted&quot;\n\n"
+        "<b>Later:</b>\nkept"
+    )
+    assert payload["message"].count("Synthetic") == 0
+
+
+def test_oversized_fields_are_skipped_and_later_fields_survive(monkeypatch):
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(kwargs)
+        return Response(json_data={"status": 1})
+
+    monkeypatch.setattr("magazarr.notifications.requests.post", fake_post)
+    oversized = "x" * PUSHOVER_MAX_MESSAGE_LENGTH
+
+    assert send_pushover(
+        pushover_settings(),
+        "Synthetic title",
+        "Description",
+        fields={"Oversized": oversized, "Later": "kept"},
+    )
+
+    message = calls[0]["data"]["message"]
+    assert len(message) <= PUSHOVER_MAX_MESSAGE_LENGTH
+    assert "Oversized" not in message
+    assert "<b>Later:</b>\nkept" in message
+
+
+def test_description_bound_does_not_cut_html_entities(monkeypatch):
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(kwargs)
+        return Response(json_data={"status": 1})
+
+    monkeypatch.setattr("magazarr.notifications.requests.post", fake_post)
+    assert send_pushover(
+        pushover_settings(),
+        "Synthetic title",
+        "<" * PUSHOVER_MAX_MESSAGE_LENGTH,
+    )
+
+    message = calls[0]["data"]["message"]
+    assert len(message) <= PUSHOVER_MAX_MESSAGE_LENGTH
+    assert message.endswith("&lt;")
 
 
 def test_api_and_network_failures_return_false(monkeypatch):

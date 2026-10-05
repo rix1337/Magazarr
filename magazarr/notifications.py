@@ -2,6 +2,7 @@
 
 import json
 from hashlib import sha256
+from html import escape
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -173,16 +174,49 @@ def send_pushover(
     if not api_token or not user_key:
         return False
 
-    message_parts = [str(description)]
+    message_parts = [escape(str(description))]
     message_parts.extend(
-        f"{name}: {value or '-'}" for name, value in (fields or {}).items()
+        f"<b>{escape(str(name))}:</b>\n{escape(str(value or '-'))}"
+        for name, value in (fields or {}).items()
     )
+    message = "\n\n".join(message_parts)
+    if len(message) > PUSHOVER_MAX_MESSAGE_LENGTH:
+        field_parts = []
+        field_length = 0
+        for name, value in (fields or {}).items():
+            field = f"<b>{escape(str(name))}:</b>\n{escape(str(value or '-'))}"
+            separator_length = 2 if field_parts else 0
+            if (
+                field_length + separator_length + len(field)
+                > PUSHOVER_MAX_MESSAGE_LENGTH
+            ):
+                continue
+            field_parts.append(field)
+            field_length += separator_length + len(field)
+
+        description_limit = PUSHOVER_MAX_MESSAGE_LENGTH - field_length
+        if field_parts:
+            description_limit -= 2
+        escaped_description = []
+        escaped_length = 0
+        for character in str(description):
+            escaped_character = escape(character)
+            if escaped_length + len(escaped_character) > description_limit:
+                break
+            escaped_description.append(escaped_character)
+            escaped_length += len(escaped_character)
+        message = "\n\n".join(
+            ["".join(escaped_description), *field_parts]
+            if escaped_description
+            else field_parts
+        )
     payload = {
         "token": api_token,
         "user": user_key,
         "title": str(title)[:PUSHOVER_MAX_TITLE_LENGTH],
-        "message": "\n".join(message_parts)[:PUSHOVER_MAX_MESSAGE_LENGTH],
-        "priority": -1 if silent else 0,
+        "message": message,
+        "html": 1,
+        "priority": -2 if silent else 0,
     }
 
     attachment = None
