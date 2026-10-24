@@ -54,6 +54,7 @@ MONTHS = {
 class IssueDate:
     key: str
     value: date | None
+    precision: str = "day"
 
 
 @dataclass(frozen=True)
@@ -155,7 +156,7 @@ def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
         value = _date(int(match.group(1)), int(match.group(2)), 1)
         if value:
             value = _clamp_future_date(value)
-            return IssueDate(value.isoformat(), value)
+            return IssueDate(value.isoformat(), value, "month")
 
     words = clean.split()
     for idx, word in enumerate(words):
@@ -168,7 +169,7 @@ def parse_issue_date(title: str, pub_date: str = "") -> IssueDate | None:
             value = _date(year, month, day or 1)
             if value:
                 value = _clamp_future_date(value)
-                return IssueDate(value.isoformat(), value)
+                return IssueDate(value.isoformat(), value, "day" if day else "month")
 
     # "Ausgabe YYYY-NN" or "Ausgabe NN YYYY" (German for "Issue")
     # Handle "Ausgabe YYYY NN" (e.g., "Ausgabe 2026 18" from tokenized "Ausgabe 2026-18")
@@ -249,18 +250,17 @@ def issue_aliases(
         aliases.add(issue.key)
         if issue.value:
             aliases.add(f"date:{issue.value.isoformat()}")
-            # Add week and month aliases for search-time duplicate prevention
-            iso = issue.value.isocalendar()
-            aliases.add(f"week:{iso[0]}-{iso[1]:02d}")
-            aliases.add(f"month:{issue.value.year}-{issue.value.month:02d}")
 
     number = parse_issue_number(title)
     if number:
         if number.year:
             aliases.add(f"{number.year}-issue-{number.number:04d}")
-        aliases.add(f"issue-{number.number:04d}")
+        else:
+            aliases.add(f"issue-{number.number:04d}")
 
-    if not (issue and issue.value and issue.value.day != 1):
+    # Issue numbers beside a year are not calendar months. Full dates already
+    # carry their identity; only month-only titles need format aliases.
+    if not number and not (issue and issue.value and issue.value.day != 1):
         aliases.update(_month_year_aliases(title))
     return aliases
 
@@ -326,6 +326,14 @@ def _nearby_year(words: list[str], idx: int) -> int | None:
     for pos in (idx + 1, idx - 1, idx + 2):
         if 0 <= pos < len(words) and re.fullmatch(r"20\d{2}", words[pos]):
             return int(words[pos])
+    # Month names can precede an explicit issue label: "November No 11 2026".
+    if (
+        idx + 3 < len(words)
+        and words[idx + 1] in {"issue", "iss", "no", "nr", "number", "ausgabe"}
+        and words[idx + 2].isdigit()
+        and re.fullmatch(r"20\d{2}", words[idx + 3])
+    ):
+        return int(words[idx + 3])
     return None
 
 

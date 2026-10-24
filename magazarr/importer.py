@@ -9,6 +9,7 @@ from pathlib import Path
 import fitz
 from loguru import logger
 
+from magazarr.cover import pdf_first_page_hash
 from magazarr.notifications import notify_error, notify_import_success
 from magazarr.quasarr_client import QuasarrClient
 from magazarr.settings import Settings
@@ -165,6 +166,38 @@ def _import_one(db, settings: Settings, download, storage: str) -> bool:
         )
         return False
 
+    incoming_hash = pdf_first_page_hash(pdf)
+    if incoming_hash and hasattr(db, "issues"):
+        for issue in db.issues(limit=-1, magazine_id=download["magazine_id"]):
+            existing_path = Path(issue["file_path"])
+            if not existing_path.is_file():
+                continue
+            if pdf_first_page_hash(existing_path) != incoming_hash:
+                continue
+            existing_path = existing_path.resolve()
+            db.update_download_status(download["id"], "imported", str(existing_path))
+            message = f"Duplicate import skipped; existing issue: {existing_path}"
+            details = f"{download['magazine_title']} - {download['release_title']}"
+            if hasattr(db, "record_event"):
+                db.record_event("info", "import", message, details)
+            try:
+                same_source = pdf.resolve() == existing_path
+                source_contains_existing = (
+                    source.is_dir() and existing_path.is_relative_to(source.resolve())
+                )
+            except OSError:
+                same_source = pdf == existing_path
+                source_contains_existing = False
+            if not same_source:
+                if source_contains_existing:
+                    pdf.unlink()
+                elif source.is_dir() and not _is_filesystem_root(source):
+                    shutil.rmtree(source)
+                elif source.is_file():
+                    source.unlink()
+            logger.info(message)
+            return True
+
     pdf_magazine_title = _pdf_title(pdf) or download["magazine_title"]
     dest = _unique_path(_library_destination(settings, download, pdf))
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -180,7 +213,11 @@ def _import_one(db, settings: Settings, download, storage: str) -> bool:
         download["package_id"],
     )
     cleanup_dir = source if source.is_dir() else None
-    if cleanup_dir and not _is_filesystem_root(cleanup_dir):
+    if (
+        cleanup_dir
+        and not _is_filesystem_root(cleanup_dir)
+        and not dest.resolve().is_relative_to(cleanup_dir.resolve())
+    ):
         shutil.rmtree(cleanup_dir)
     logger.info(f"Imported {dest}")
     reference = _discord_reference(download)

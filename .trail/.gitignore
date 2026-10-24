@@ -1,0 +1,6 @@
+*
+!.gitignore
+!learnings/
+!learnings/*.md
+!learnings/.gitkeep
+cache/

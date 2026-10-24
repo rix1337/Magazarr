@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 
@@ -10,6 +11,7 @@ from magazarr.notifications import notify_download_started, notify_error
 from magazarr.quasarr_client import QuasarrClient, QuasarrResult
 from magazarr.settings import Settings
 from magazarr.utils import (
+    MONTHS,
     IssueDate,
     issue_aliases,
     magazine_title_matches,
@@ -146,16 +148,16 @@ def filter_candidates(
         db.blacklist_terms(magazine["id"]) if hasattr(db, "blacklist_terms") else []
     )
     issue_records = _issue_records(db, magazine["id"])
-    profiles = _sequence_profiles(
-        magazine["title"],
-        [row[0] for row in issue_records]
-        + [
-            result.title
-            for result in results
-            if magazine_title_matches(magazine["title"], result.title)
-        ],
+    titles = [row[0] for row in issue_records] + [
+        result.title
+        for result in results
+        if magazine_title_matches(magazine["title"], result.title)
+    ]
+    profiles = _sequence_profiles(magazine["title"], titles)
+    monthly_families = _monthly_families(magazine["title"], titles)
+    existing_aliases = _existing_aliases(
+        issue_records, profiles, magazine["title"], monthly_families
     )
-    existing_aliases = _existing_aliases(issue_records, profiles, magazine["title"])
 
     for result in results:
         recent_by_pub_date = pub_date_within_past_days(
@@ -198,14 +200,30 @@ def filter_candidates(
             _record_skip(db, magazine, result, "outside_past_days", issue.key)
             continue
         aliases = _release_aliases(
-            result.title, result.pub_date, issue, profiles, magazine["title"]
+            result.title,
+            result.pub_date,
+            issue,
+            profiles,
+            magazine["title"],
+            monthly_families,
         )
+        number = parse_issue_number(result.title)
+        family = _release_family(magazine["title"], result.title)
+        scoped_family = _family_scoped_only(family)
+        issue_key = _canonical_issue_key(issue, number)
+        if scoped_family:
+            issue_key = f"{issue_key}-edition-{'.'.join(family)}"
         if (
-            _has_issue_key_duplicate(db, magazine["id"], issue.key)
+            _has_issue_key_duplicate(
+                db,
+                magazine["id"],
+                issue_key,
+                bypass=bool(number or scoped_family),
+            )
             or aliases & existing_aliases
         ):
-            _record_skip(db, magazine, result, "duplicate", issue.key)
-            _emit_skip(on_progress, magazine, result, "duplicate", issue.key)
+            _record_skip(db, magazine, result, "duplicate", issue_key)
+            _emit_skip(on_progress, magazine, result, "duplicate", issue_key)
             continue
         candidate = Candidate(
             magazine_id=magazine["id"],
@@ -214,7 +232,7 @@ def filter_candidates(
             download_url=result.download_url,
             pub_date=result.pub_date,
             size_bytes=result.size_bytes,
-            issue_key=issue.key,
+            issue_key=issue_key,
             aliases=tuple(sorted(aliases)),
         )
         candidates.append(candidate)
@@ -256,6 +274,7 @@ def _existing_aliases(
     issue_records: list[tuple[str, str, str]],
     profiles: list[SequenceProfile],
     magazine_title: str,
+    monthly_families: set[tuple[tuple[str, ...], int]],
 ) -> set[str]:
     aliases = set()
     for title, pub_date, key in issue_records:
@@ -263,7 +282,9 @@ def _existing_aliases(
         if issue is None and key:
             issue = IssueDate(str(key), None)
         aliases.update(
-            _release_aliases(title, pub_date, issue, profiles, magazine_title)
+            _release_aliases(
+                title, pub_date, issue, profiles, magazine_title, monthly_families
+            )
         )
     return aliases
 
@@ -274,17 +295,36 @@ def _release_aliases(
     issue: IssueDate | None,
     profiles: list[SequenceProfile],
     magazine_title: str,
+    monthly_families: set[tuple[tuple[str, ...], int]],
 ) -> set[str]:
     aliases = issue_aliases(title, pub_date, issue)
     family = _release_family(magazine_title, title)
     number = parse_issue_number(title)
     if number:
+        # An explicit issue number is authoritative. A date in the same title
+        # may be a publication date for a different numbered release.
+        if issue and issue.value:
+            aliases.discard(issue.key)
+            aliases.discard(f"date:{issue.value.isoformat()}")
+    elif _family_scoped_only(family) and issue and issue.value:
+        # Calendar aliases must stay inside recognized edition families.
+        aliases.discard(issue.key)
+        aliases.discard(f"date:{issue.value.isoformat()}")
+        aliases.add(f"date:{'.'.join(family)}:{issue.value.isoformat()}")
+    if issue and issue.value and (not number or issue.precision == "month"):
+        for alias_family in _compatible_alias_families(family):
+            if (alias_family, issue.value.year) in monthly_families:
+                aliases.add(
+                    f"monthly:{'.'.join(alias_family)}:{issue.value.year}-{issue.value.month:02d}"
+                )
+    if number:
         aliases.discard(f"issue-{number.number:04d}")
         alias_families = _alias_families(family, number.year, issue, profiles)
-        for alias_family in alias_families:
-            aliases.add(
-                _sequence_issue_alias(alias_family, f"issue-{number.number:04d}")
-            )
+        if number.year is None:
+            for alias_family in alias_families:
+                aliases.add(
+                    _sequence_issue_alias(alias_family, f"issue-{number.number:04d}")
+                )
         if number.year:
             aliases.discard(f"{number.year}-issue-{number.number:04d}")
             for alias_family in alias_families:
@@ -294,8 +334,41 @@ def _release_aliases(
                         f"{number.year}-issue-{number.number:04d}",
                     )
                 )
-    aliases.update(_inferred_sequence_aliases(title, issue, profiles, magazine_title))
+    if not number:
+        aliases.update(
+            _inferred_sequence_aliases(title, issue, profiles, magazine_title)
+        )
     return aliases
+
+
+def _monthly_families(
+    magazine_title: str, titles: list[str]
+) -> set[tuple[tuple[str, ...], int]]:
+    months: dict[tuple[tuple[str, ...], int], set[int]] = {}
+    dated: dict[tuple[tuple[str, ...], int], dict[int, set[int]]] = {}
+    for title in titles:
+        issue = parse_issue_date(title)
+        if not issue or not issue.value:
+            continue
+        family = _release_family(magazine_title, title)
+        for alias_family in _compatible_alias_families(family):
+            key = (alias_family, issue.value.year)
+            if issue.precision == "month":
+                # "Ausgabe YYYY-NN" is an issue number, not monthly evidence.
+                if not parse_issue_number(title) or set(tokens(title)) & MONTHS.keys():
+                    months.setdefault(key, set()).add(issue.value.month)
+            else:
+                dated.setdefault(key, {}).setdefault(issue.value.month, set()).add(
+                    issue.value.day
+                )
+    # Weekly and biweekly series can also have ambiguous YYYY-NN listings.
+    # Multiple dated issues in a month rule out monthly aliasing for that series.
+    return {
+        family
+        for family, values in months.items()
+        if len(values) >= 2
+        and all(len(days) <= 1 for days in dated.get(family, {}).values())
+    }
 
 
 def _sequence_profiles(magazine_title: str, titles: list[str]) -> list[SequenceProfile]:
@@ -363,11 +436,16 @@ def _inferred_sequence_aliases(
         _release_family(magazine_title, title),
         issue.value.year,
     )
-    issue_numbers = {
-        (profile.family, number)
-        for profile in matching_profiles
-        for number in _inferred_issue_numbers(issue.value, profile)
-    }
+    predictions = [
+        _inferred_issue_numbers(issue.value, profile) for profile in matching_profiles
+    ]
+    if not predictions or any(len(numbers) != 1 for numbers in predictions):
+        return set()
+    inferred_numbers = {next(iter(numbers)) for numbers in predictions}
+    if len(inferred_numbers) != 1:
+        return set()
+    number = next(iter(inferred_numbers))
+    issue_numbers = {(profile.family, number) for profile in matching_profiles}
     return {
         _sequence_issue_alias(family, f"{issue.value.year}-issue-{number:04d}")
         for profile_family, number in issue_numbers
@@ -383,9 +461,9 @@ def _matching_profiles(
     year_profiles = [profile for profile in profiles if profile.year == year]
     if family:
         return [profile for profile in year_profiles if profile.family == family]
-    if len(year_profiles) == 1:
-        return year_profiles
-    return [profile for profile in year_profiles if not profile.family]
+    return [
+        profile for profile in year_profiles if not _family_scoped_only(profile.family)
+    ]
 
 
 def _alias_families(
@@ -399,7 +477,11 @@ def _alias_families(
     year = number_year or (issue.value.year if issue and issue.value else None)
     if year is None:
         return (family,)
-    year_profiles = [profile for profile in profiles if profile.year == year]
+    year_profiles = [
+        profile
+        for profile in profiles
+        if profile.year == year and not _family_scoped_only(profile.family)
+    ]
     if len(year_profiles) == 1:
         return tuple(
             dict.fromkeys(
@@ -421,7 +503,22 @@ def _compatible_alias_families(family: tuple[str, ...]) -> tuple[tuple[str, ...]
 
 
 def _family_scoped_only(family: tuple[str, ...]) -> bool:
-    return bool(set(family) & {"make", "special", "spezial", "uk", "usa"})
+    return bool(
+        set(family)
+        & {
+            "make",
+            "special",
+            "spezial",
+            "uk",
+            "usa",
+            "us",
+            "eu",
+            "edition",
+            "sonderheft",
+            "sonderhefte",
+            "fotografie",
+        }
+    )
 
 
 def _inferred_issue_numbers(issue_date: date, profile: SequenceProfile) -> set[int]:
@@ -455,14 +552,19 @@ def _release_family(magazine_title: str, title: str) -> tuple[str, ...]:
         if word in {"issue", "iss", "no", "nr", "number", "ausgabe"}:
             skip_next_number = True
             continue
-        if word.isdigit() or word in {
-            "vom",
-            "aktuelle",
-            "inkl",
-            "jahresarchiven",
-            "einzeln",
-            "ladbar",
-        }:
+        if (
+            word.isdigit()
+            or word in MONTHS
+            or word
+            in {
+                "vom",
+                "aktuelle",
+                "inkl",
+                "jahresarchiven",
+                "einzeln",
+                "ladbar",
+            }
+        ):
             continue
         family.append(word)
     return tuple(family)
@@ -472,7 +574,20 @@ def _sequence_issue_alias(family: tuple[str, ...], issue_key: str) -> str:
     return f"sequence:{'.'.join(family)}:{issue_key}"
 
 
-def _has_issue_key_duplicate(db, magazine_id: int, issue_key: str) -> bool:
+def _canonical_issue_key(issue: IssueDate, number) -> str:
+    if number:
+        year = number.year or (issue.value.year if issue.value else None)
+        if year:
+            return f"{year}-issue-{number.number:04d}"
+        return f"issue-{number.number:04d}"
+    return issue.key
+
+
+def _has_issue_key_duplicate(
+    db, magazine_id: int, issue_key: str, bypass: bool = False
+) -> bool:
+    if bypass:
+        return False
     if _numbered_issue_key(issue_key) and hasattr(db, "issue_records"):
         return False
     return db.has_issue_or_download(magazine_id, issue_key)
@@ -483,10 +598,13 @@ def _numbered_issue_key(issue_key: str) -> bool:
 
 
 def _common_offsets(offsets) -> tuple[int, ...]:
-    unique_offsets = tuple(sorted(set(offsets)))
-    if len(unique_offsets) != 1:
+    values = tuple(offsets)
+    if len(values) < 2:
         return ()
-    return unique_offsets
+    offset, support = Counter(values).most_common(1)[0]
+    if support < 2 or support * 2 <= len(values):
+        return ()
+    return (offset,)
 
 
 def _ordinal_week(value: date) -> int:

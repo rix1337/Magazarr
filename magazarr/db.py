@@ -7,19 +7,18 @@ import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
+from magazarr.cover import pdf_first_page_hash
 from magazarr.utils import clean_release_title, parse_issue_date
 
 
 def _compute_sort_value(issue_key: str, release_title: str = "") -> str:
-    """Compute a normalized sort value from issue_key for proper ordering.
-
-    Date-based keys sort normally. Issue-number keys sort after all dates
-    in the same year (using month 00) so they appear after date-based issues
-    in DESC order.
-    """
+    """Return date-based sort value, with issue-number fallback ordering."""
     match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", issue_key)
     if match:
         return issue_key
+    issue = parse_issue_date(release_title)
+    if issue and issue.value:
+        return issue.value.isoformat()
     match = re.fullmatch(r"(\d{4})-issue-(\d{4})", issue_key)
     if match:
         year, number = match.group(1), int(match.group(2))
@@ -27,9 +26,6 @@ def _compute_sort_value(issue_key: str, release_title: str = "") -> str:
     match = re.fullmatch(r"issue-(\d{4})", issue_key)
     if match:
         return f"0000-00-{int(match.group(1)):04d}"
-    issue = parse_issue_date(release_title)
-    if issue and issue.value:
-        return issue.value.isoformat()
     return issue_key
 
 
@@ -872,12 +868,21 @@ class Database:
         with self.connect() as conn:
             row = conn.execute(
                 """
-                SELECT 1 FROM skipped_releases
-                WHERE magazine_id=?
-                  AND status='skipped'
+                SELECT 1 FROM skipped_releases s
+                WHERE s.magazine_id=?
+                  AND s.status='skipped'
                   AND (
-                    release_title=? COLLATE NOCASE
-                    OR download_url=?
+                    s.reason != 'duplicate'
+                    OR EXISTS (
+                        SELECT 1 FROM downloads d
+                        WHERE d.magazine_id=s.magazine_id
+                          AND d.issue_key=s.issue_key
+                          AND d.status='deleted'
+                    )
+                  )
+                  AND (
+                    s.release_title=? COLLATE NOCASE
+                    OR s.download_url=?
                   )
                 UNION
                 SELECT 1 FROM downloads
@@ -1177,10 +1182,6 @@ class Database:
         and groups by page hash. Only issues with identical first
         pages are flagged as duplicates.
         """
-        import hashlib
-
-        import fitz
-
         issues = self.issues(limit=-1, magazine_id=magazine_id)
         if len(issues) < 2:
             return []
@@ -1188,20 +1189,9 @@ class Database:
         # Extract first-page hashes for all issues
         page_hashes: dict[int, str] = {}
         for issue in issues:
-            file_path_str = issue["file_path"]
-            try:
-                file_path = Path(file_path_str)
-                if not file_path.exists():
-                    continue
-                doc = fitz.open(str(file_path))
-                if len(doc) > 0:
-                    page = doc[0]
-                    pix = page.get_pixmap(matrix=fitz.Matrix(0.5, 0.5))
-                    page_hash = hashlib.md5(pix.tobytes("png")).hexdigest()
-                    page_hashes[issue["id"]] = page_hash
-                doc.close()
-            except Exception:
-                pass
+            page_hash = pdf_first_page_hash(Path(issue["file_path"]))
+            if page_hash:
+                page_hashes[issue["id"]] = page_hash
 
         # Group by page hash
         hash_groups: dict[str, list[sqlite3.Row]] = {}
