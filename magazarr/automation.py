@@ -142,6 +142,10 @@ class AutomationService:
             skipped = self.db.skipped_release_by_id(skip_id)
             if not skipped:
                 return None
+            if not skipped["download_url"]:
+                # A deleted issue without a known source: unblocking is all there is to do.
+                self.db.mark_skipped_release_unskipped(skip_id, None)
+                return None
             settings = self.settings_store.load()
             client = QuasarrClient(settings.quasarr_url, settings.quasarr_api_key)
             package_ids = client.add_url(

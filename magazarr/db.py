@@ -122,6 +122,28 @@ class Database:
         self._migrate_sort_value()
         self._migrate_fix_unknown_paths()
         self._migrate_clamp_future_dates()
+        self._migrate_block_deleted_issues()
+
+    def _migrate_block_deleted_issues(self):
+        # Before 1.0.3 a deleted issue was only blocked for the same source.
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO skipped_releases(
+                    magazine_id, issue_key, release_title, download_url,
+                    size_bytes, reason, status
+                )
+                SELECT magazine_id, issue_key, release_title, download_url,
+                       size_bytes, 'Deleted manually', 'skipped'
+                FROM downloads d
+                WHERE status='deleted'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM skipped_releases s
+                    WHERE s.magazine_id=d.magazine_id
+                      AND s.release_title=d.release_title COLLATE NOCASE
+                  )
+                """
+            )
 
     def _migrate_clean_retry_suffixes(self):
         with self.connect() as conn:
@@ -464,6 +486,35 @@ class Database:
                 WHERE package_id=? OR (magazine_id=? AND issue_key=?)
                 """,
                 (issue["package_id"], issue["magazine_id"], issue["issue_key"]),
+            )
+            # Block the deleted release from every source. It shows under Skipped,
+            # where "Download anyway" undoes it. The issue itself stays open, since a
+            # deleted issue is often a mismatched release holding a real issue's key.
+            download = conn.execute(
+                """
+                SELECT download_url FROM downloads
+                WHERE magazine_id=? AND release_title=? COLLATE NOCASE
+                ORDER BY id DESC LIMIT 1
+                """,
+                (issue["magazine_id"], issue["release_title"]),
+            ).fetchone()
+            conn.execute(
+                """
+                INSERT INTO skipped_releases(
+                    magazine_id, issue_key, release_title, download_url,
+                    size_bytes, reason, status
+                ) VALUES (?, ?, ?, ?, ?, 'Deleted manually', 'skipped')
+                ON CONFLICT(magazine_id, release_title, reason) DO UPDATE SET
+                    status='skipped',
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    issue["magazine_id"],
+                    issue["issue_key"],
+                    issue["release_title"],
+                    download["download_url"] if download else "",
+                    issue["size_bytes"],
+                ),
             )
         return issue
 

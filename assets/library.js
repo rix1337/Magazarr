@@ -100,7 +100,7 @@
   async function deleteIssues(ids, label) {
     const ok = await confirmDialog({
       title: ids.length === 1 ? "Delete this issue?" : `Delete ${ids.length} issues?`,
-      message: `${label} ${ids.length === 1 ? "is" : "are"} deleted from disk. This cannot be undone.`,
+      message: `${label} ${ids.length === 1 ? "is" : "are"} deleted from disk and not downloaded again. This cannot be undone.`,
       confirmLabel: ids.length === 1 ? "Delete issue" : `Delete ${ids.length}`,
     });
     if (!ok) return;

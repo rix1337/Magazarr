@@ -385,3 +385,88 @@ def test_search_dedupes_numbered_and_date_release_with_anchored_sequence(
     assert len(found) == 1
     assert found[0].title in {item.title for item in results}
     assert len(add_url_calls) == 1
+
+
+@pytest.mark.parametrize("with_download", [True, False])
+def test_deleted_issue_release_is_blocked_from_every_source(
+    magazine_db, tmp_path, monkeypatch, with_download
+):
+    db, magazine = magazine_db
+    title = "Weekly Title No 44 2026"
+    if with_download:
+        db.record_manual_download(
+            magazine["id"],
+            "2026-issue-0044",
+            title,
+            "https://example.test/first-source",
+            SIZE,
+            "package-44",
+        )
+    db.record_issue(
+        magazine["id"],
+        "2026-issue-0044",
+        title,
+        str(tmp_path / "weekly-44.pdf"),
+        SIZE,
+        "package-44" if with_download else None,
+    )
+    db.delete_issue(db.issues(limit=-1, magazine_id=magazine["id"])[0]["id"])
+
+    results = [
+        QuasarrResult(title, "https://example.test/other-source", "", SIZE, "other"),
+        release("Weekly Title No 45 2026", "next-45"),
+    ]
+    install_search_client(monkeypatch, results, [], [])
+
+    found = search_magazine(db, SEARCH_SETTINGS, magazine)
+
+    assert [item.title for item in found] == ["Weekly Title No 45 2026"]
+    skipped = db.skipped_releases(limit=10, magazine_id=magazine["id"])
+    assert [(row["release_title"], row["reason"]) for row in skipped] == [
+        (title, "Deleted manually")
+    ]
+
+
+def test_migration_blocks_previously_deleted_issues(magazine_db):
+    db, magazine = magazine_db
+    for key, title in (
+        ("2026-issue-0043", "Weekly Title No 43 2026"),
+        ("2026-issue-0044", "Weekly Title No 44 2026"),
+    ):
+        db.record_manual_download(
+            magazine["id"], key, title, f"https://example.test/{key}", SIZE, key
+        )
+    for download in db.downloads():
+        db.update_download_status(download["id"], "deleted")
+    skipped_download = next(
+        row for row in db.downloads() if row["issue_key"] == "2026-issue-0044"
+    )
+    db.record_skipped_download(skipped_download, "Skipped manually")
+
+    db.migrate()
+    db.migrate()
+
+    skipped = db.skipped_releases(limit=10, magazine_id=magazine["id"])
+    assert sorted((row["release_title"], row["reason"]) for row in skipped) == [
+        ("Weekly Title No 43 2026", "Deleted manually"),
+        ("Weekly Title No 44 2026", "Skipped manually"),
+    ]
+
+
+def test_unskipping_deleted_issue_without_source_only_unblocks(magazine_db, tmp_path):
+    from magazarr.web import _unskip_release
+
+    db, magazine = magazine_db
+    db.record_issue(
+        magazine["id"],
+        "2026-issue-0044",
+        "Weekly Title No 44 2026",
+        str(tmp_path / "weekly-44.pdf"),
+        SIZE,
+        None,
+    )
+    db.delete_issue(db.issues(limit=-1, magazine_id=magazine["id"])[0]["id"])
+    skip_id = db.skipped_releases(limit=10, magazine_id=magazine["id"])[0]["id"]
+
+    assert _unskip_release(db, SEARCH_SETTINGS, skip_id) is None
+    assert db.skipped_releases(limit=10, magazine_id=magazine["id"]) == []

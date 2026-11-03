@@ -1144,7 +1144,7 @@
       }
       const ok = await confirmDialog({
         title: "Delete this issue?",
-        message: `${$(".issue-title", tile).textContent} is deleted from disk.`,
+        message: `${$(".issue-title", tile).textContent} is deleted from disk and not downloaded again.`,
         confirmLabel: "Delete issue",
       });
       if (!ok) return;
@@ -1183,7 +1183,7 @@
       setBusy(rowButton, true);
       try {
         await post(url);
-        toast({ retry: "Sent to Quasarr again", "delete-error": "Error deleted", unskip: "Sent to Quasarr" }[action], "success");
+        toast({ retry: "Sent to Quasarr again", "delete-error": "Error deleted", unskip: "Release unblocked" }[action], "success");
         node.remove();
         await refreshDashboard();
         loadTab();
