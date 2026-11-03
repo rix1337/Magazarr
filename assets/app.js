@@ -731,6 +731,8 @@
     if (switching) {
       sheet.duplicates = null;
       sheetSearch.value = "";
+      // Never show the previous magazine's rows while this one loads.
+      delete sheetBody.dataset.tab;
     }
     renderSheetHead();
     if (!sheetDialog.open) sheetDialog.showModal();
@@ -869,12 +871,15 @@
     const request = ++sheet.request;
     if (tab === "blocklist") {
       sheetPager.hidden = true;
-      renderBlocklist(mag);
+      // Refreshes must not wipe a term being typed.
+      if (sheetBody.dataset.tab === "blocklist" && $(".blocklist-form", sheetBody)) renderBlocklistChips(mag);
+      else renderBlocklist(mag);
       return;
     }
     if (tab === "duplicates") {
       sheetPager.hidden = true;
-      if (!sheetBody.querySelector(".issue-grid, .empty-inline")) sheetBody.innerHTML = skeletonGrid();
+      if (sheetBody.dataset.tab !== "duplicates") sheetBody.innerHTML = skeletonGrid();
+      sheetBody.dataset.tab = "duplicates";
       try {
         const data = await api(`/api/magazines/${mag.id}/duplicates`);
         if (request !== sheet.request) return;
@@ -1056,10 +1061,11 @@
         <div class="chips" id="blocklist-chips"></div>
       </div>`;
     renderBlocklistChips(mag);
-    $(".blocklist-form input", sheetBody).focus();
+    // Focusing on touch screens would pop the keyboard over the list.
+    if (matchMedia("(hover: hover)").matches) $(".blocklist-form input", sheetBody).focus();
   }
 
-  function renderBlocklistChips(mag, fresh = "") {
+  function renderBlocklistChips(mag) {
     const chips = $("#blocklist-chips", sheetBody);
     if (!chips) return;
     const signature = JSON.stringify(mag.blacklist);
@@ -1071,7 +1077,7 @@
     }
     chips.replaceChildren(...mag.blacklist.map((term) => {
       const chip = document.createElement("span");
-      chip.className = `chip${term.term === fresh ? " is-new" : ""}`;
+      chip.className = "chip";
       chip.dataset.termId = term.id;
       chip.innerHTML = `<span></span><button type="button" aria-label="Remove">${icon("x")}</button>`;
       chip.firstElementChild.textContent = term.term;
@@ -1098,8 +1104,10 @@
       await post(`/magazines/${mag.id}/blacklist`, { term });
       input.value = "";
       await refreshDashboard();
-      const updated = byId(mag.id);
-      if (updated) renderBlocklistChips(updated, term);
+      // The refresh already rendered the chips; mark the new one.
+      [...sheetBody.querySelectorAll(".chip")]
+        .find((chip) => chip.firstElementChild.textContent.toLocaleLowerCase() === term.toLocaleLowerCase())
+        ?.classList.add("is-new");
     } catch (error) {
       toast(error.message, "error");
     } finally {

@@ -451,7 +451,7 @@ def issue_viewer_page(issue) -> str:
     body = f"""
     <section class="viewer-shell">
       <header class="viewer-bar">
-        <a class="btn btn-quiet btn-icon" href="/library" aria-label="Back to library">{icon("arrow-left")}</a>
+        <a class="btn btn-quiet btn-icon" href="/library" aria-label="Back" onclick="if (document.referrer.startsWith(location.origin + '/')) {{ history.back(); return false; }}">{icon("arrow-left")}</a>
         <div class="viewer-title">
           <h1>{html.escape(title)}</h1>
           <div class="muted">{html.escape(issue["release_title"])}</div>

@@ -57,7 +57,7 @@ def create_app(settings_store: SettingsStore, db, automation=None):
     @app.post("/settings")
     def save_settings():
         try:
-            settings_store.update_from_form(request.forms)
+            settings_store.update_from_form(request.forms.decode())
         except ValueError as exc:
             raise HTTPError(400, str(exc)) from exc
         redirect("/")
@@ -65,7 +65,7 @@ def create_app(settings_store: SettingsStore, db, automation=None):
     @app.post("/notifications/pushover/test")
     def test_pushover():
         try:
-            settings = settings_store.update_from_form(request.forms)
+            settings = settings_store.update_from_form(request.forms.decode())
         except ValueError as exc:
             raise HTTPError(400, str(exc)) from exc
         if not settings.pushover_api_token or not settings.pushover_user_key:
@@ -84,12 +84,14 @@ def create_app(settings_store: SettingsStore, db, automation=None):
 
     @app.post("/magazines")
     def add_magazine():
-        db.add_magazine(str(request.forms.get("title", "")))
+        db.add_magazine(str(request.forms.decode().get("title", "")))
         redirect("/")
 
     @app.post("/magazines/<magazine_id:int>/active")
     def active_magazine(magazine_id):
-        db.set_magazine_active(magazine_id, request.forms.get("active") == "on")
+        db.set_magazine_active(
+            magazine_id, request.forms.decode().get("active") == "on"
+        )
         redirect("/")
 
     @app.post("/magazines/<magazine_id:int>/delete")
@@ -336,8 +338,13 @@ def create_app(settings_store: SettingsStore, db, automation=None):
                 try:
                     if path.exists() and path.is_file():
                         path.unlink()
-                except OSError:
-                    pass
+                except OSError as exc:
+                    db.record_event(
+                        "error",
+                        "library",
+                        f"Failed to delete issue file: {path}",
+                        str(exc),
+                    )
                 deleted += 1
         db.record_event("info", "library", f"Bulk deleted {deleted} issue(s)", "")
         return json_response({"deleted": deleted})
@@ -384,7 +391,7 @@ def create_app(settings_store: SettingsStore, db, automation=None):
 
     @app.post("/magazines/<magazine_id:int>/blacklist")
     def add_blacklist_term(magazine_id):
-        db.add_blacklist_term(magazine_id, str(request.forms.get("term", "")))
+        db.add_blacklist_term(magazine_id, str(request.forms.decode().get("term", "")))
         redirect("/")
 
     @app.post("/blacklist/<term_id:int>/delete")

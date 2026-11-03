@@ -700,3 +700,39 @@ def _wsgi_request(app, method: str, path: str):
 
     body = b"".join(app(environ, start_response))
     return captured["status"], captured["headers"], body
+
+
+def test_form_posts_keep_non_ascii_text(tmp_path):
+    from urllib.parse import urlencode
+
+    db = Database(tmp_path / "magazarr.db")
+    db.migrate()
+    app = create_app(SettingsStore(tmp_path / "settings.json"), db)
+
+    def post(path, fields):
+        body = urlencode(fields).encode()
+        environ = {}
+        setup_testing_defaults(environ)
+        environ.update(
+            {
+                "REQUEST_METHOD": "POST",
+                "PATH_INFO": path,
+                "QUERY_STRING": "",
+                "CONTENT_TYPE": "application/x-www-form-urlencoded",
+                "CONTENT_LENGTH": str(len(body)),
+                "wsgi.input": BytesIO(body),
+            }
+        )
+        b"".join(app(environ, lambda status, headers, exc_info=None: None))
+
+    post("/magazines", {"title": "Zeitschrift für Ökologie"})
+    magazine = db.magazines()[0]
+    assert magazine["title"] == "Zeitschrift für Ökologie"
+
+    post(f"/magazines/{magazine['id']}/blacklist", {"term": "Übersetzung"})
+    assert db.blacklist_terms(magazine["id"]) == ["Übersetzung"]
+
+    post("/settings", {"library_dir": str(tmp_path / "Bücher")})
+    assert (
+        SettingsStore(tmp_path / "settings.json").load().library_dir.endswith("Bücher")
+    )
