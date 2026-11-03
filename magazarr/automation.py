@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import dataclasses
+import queue
 import threading
 import time
 from datetime import datetime, timezone
@@ -23,6 +24,9 @@ class AutomationService:
         self._jobs_lock = threading.Lock()
         self._jobs = {}
         self._job_seq = 0
+        # Manual searches run one at a time, in the order they were started.
+        self._job_queue = queue.Queue()
+        self._job_worker: threading.Thread | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -55,24 +59,25 @@ class AutomationService:
         magazine = self.db.magazine_by_id(magazine_id)
         title = magazine["title"] if magazine else "Missing magazine"
         job_id = self._new_job(f"Search {title}")
-        thread = threading.Thread(
-            target=self._run_search_magazine_job,
-            args=(job_id, magazine_id),
-            name=f"magazarr-job-{job_id}",
-            daemon=True,
-        )
-        thread.start()
+
+        def run(progress):
+            magazine = self.db.magazine_by_id(magazine_id)
+            if not magazine:
+                raise ValueError("Magazine not found")
+            return search_magazine(
+                self.db, self.settings_store.load(), magazine, progress
+            )
+
+        self._enqueue_job(job_id, run)
         return job_id
 
     def start_search_all_job(self) -> str:
         job_id = self._new_job("Search all")
-        thread = threading.Thread(
-            target=self._run_search_all_job,
-            args=(job_id,),
-            name=f"magazarr-job-{job_id}",
-            daemon=True,
-        )
-        thread.start()
+
+        def run(progress):
+            return search_all(self.db, self.settings_store.load(), progress)
+
+        self._enqueue_job(job_id, run)
         return job_id
 
     def job_status(self, job_id: str):
@@ -174,25 +179,23 @@ class AutomationService:
             )
             return package_id
 
-    def _run_search_magazine_job(self, job_id: str, magazine_id: int):
-        def run(progress):
-            magazine = self.db.magazine_by_id(magazine_id)
-            if not magazine:
-                raise ValueError("Magazine not found")
-            return search_magazine(
-                self.db, self.settings_store.load(), magazine, progress
+    def _enqueue_job(self, job_id: str, callback):
+        self._append_job_event(job_id, "queued", "Waiting for current task")
+        self._job_queue.put((job_id, callback))
+        with self._jobs_lock:
+            if self._job_worker and self._job_worker.is_alive():
+                return
+            self._job_worker = threading.Thread(
+                target=self._job_loop, name="magazarr-jobs", daemon=True
             )
+            self._job_worker.start()
 
-        self._run_job(job_id, run)
-
-    def _run_search_all_job(self, job_id: str):
-        def run(progress):
-            return search_all(self.db, self.settings_store.load(), progress)
-
-        self._run_job(job_id, run)
+    def _job_loop(self):
+        while True:
+            job_id, callback = self._job_queue.get()
+            self._run_job(job_id, callback)
 
     def _run_job(self, job_id: str, callback):
-        self._append_job_event(job_id, "queued", "Waiting for current task")
         with self._lock:
             self._set_job_status(job_id, "running")
             self._append_job_event(job_id, "started", "Search started")
@@ -210,6 +213,9 @@ class AutomationService:
         with self._jobs_lock:
             self._job_seq += 1
             job_id = str(self._job_seq)
+            for old_id in list(self._jobs)[:-50]:
+                if self._jobs[old_id]["status"] in ("done", "error"):
+                    del self._jobs[old_id]
             self._jobs[job_id] = {
                 "id": job_id,
                 "title": title,
@@ -217,6 +223,7 @@ class AutomationService:
                 "created_at": _now(),
                 "updated_at": _now(),
                 "events": [],
+                "event_count": 0,
             }
             return job_id
 
@@ -249,6 +256,7 @@ class AutomationService:
                 }
             )
             job["events"] = job["events"][-300:]
+            job["event_count"] += 1
             job["updated_at"] = _now()
 
     def run_cycle(self):

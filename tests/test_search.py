@@ -22,6 +22,9 @@ class FakeDb:
     def issue_records(self, magazine_id):
         return []
 
+    def mark_searched(self, magazine_id):
+        self.searched = magazine_id
+
 
 def test_filter_candidates_prefers_valid_recent_unseen_results():
     settings = SimpleNamespace(past_days=999, min_size_mb=1, max_size_mb=0)
@@ -182,6 +185,7 @@ def test_search_progress_does_not_emit_raw_found_events(monkeypatch):
 
     assert downloads == []
     assert "found" not in [event["event"] for event in events]
+    assert db.searched == 7
     assert any(
         event["event"] == "skipped" and event["reason"] == "title_mismatch"
         for event in events

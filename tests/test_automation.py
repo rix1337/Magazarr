@@ -37,3 +37,32 @@ def test_skipped_progress_message_includes_reason():
         message
         == "Magazine Title: Magazine Title Photo 2026 - blacklisted: Magazine Title Photo"
     )
+
+
+def test_manual_jobs_run_in_start_order():
+    import time
+
+    from magazarr.automation import AutomationService
+
+    service = AutomationService(settings_store=None, db=None)
+    order = []
+    job_ids = []
+    with service._lock:
+        # Hold the lock so every job is queued before the first one runs.
+        for index in range(5):
+            job_id = service._new_job(f"Job {index}")
+            job_ids.append(job_id)
+            service._enqueue_job(
+                job_id, lambda progress, index=index: order.append(index)
+            )
+        assert all(
+            service.job_status(job_id)["status"] == "queued" for job_id in job_ids
+        )
+    deadline = time.time() + 5
+    while (
+        service.job_status(job_ids[-1])["status"] != "done" and time.time() < deadline
+    ):
+        time.sleep(0.01)
+
+    assert order == [0, 1, 2, 3, 4]
+    assert service.job_status(job_ids[0])["event_count"] == 3

@@ -72,6 +72,7 @@ def search_magazine(
         settings.quasarr_search_category,
         on_page=on_page,
     )
+    db.mark_searched(magazine["id"])
     _emit(on_progress, "results", magazine, count=len(results))
     candidates = filter_candidates(db, settings, magazine, results, on_progress)
 

@@ -15,7 +15,6 @@
     sort: store.get("sort", "title"),
     view: store.get("view", "rack"),
     text: "",
-    searching: new Set(),
     loaded: false,
   };
 
@@ -212,7 +211,7 @@
     const toggle = $("input[data-act='active']", node);
     if (!toggle.disabled) toggle.checked = mag.active;
 
-    const searching = state.searching.has(mag.id);
+    const searching = isSearching(mag.id);
     setOnce(node, "searching", String(searching), () => {
       const button = $(".mag-tools [data-act='search']", node);
       button.innerHTML = searching ? '<span class="spinner"></span>' : icon("search");
@@ -391,8 +390,11 @@
   const jobPanel = $("#job-panel");
   const jobTitle = $("#job-title");
   const jobStatus = $("#job-status");
+  const jobQueue = $("#job-queue");
   const jobResults = $("#job-results");
-  let activeJob = 0;
+  // Searches started from this page, oldest first. The server runs them one at a time in this order.
+  let jobs = [];
+  let shownJob = null;
 
   const eventLabels = {
     searching: ["Searching", "is-muted"],
@@ -405,81 +407,143 @@
     done: ["Done", "is-live"],
     error: ["Error", "is-danger"],
   };
+  const jobLabels = {
+    queued: ["Queued", "is-muted"],
+    running: ["Running", "is-live"],
+    done: ["Done", "is-live"],
+    error: ["Failed", "is-danger"],
+  };
 
-  function showJob(title) {
-    jobPanel.hidden = false;
-    jobPanel.classList.remove("is-done", "is-failed", "is-collapsed");
-    $("#job-toggle").setAttribute("aria-expanded", "true");
-    jobTitle.textContent = title;
-    jobStatus.textContent = "Starting…";
-    jobResults.replaceChildren();
-  }
+  const finished = (job) => job.status === "done" || job.status === "error";
+  const isSearching = (id) => jobs.some((job) => !finished(job) && job.ids.includes(id));
 
-  function appendJobEvent(item) {
+  function jobEventRow(item) {
     const [label, tone] = eventLabels[item.event] || [item.event, "is-muted"];
     const row = document.createElement("div");
     row.className = "job-event";
     row.innerHTML = `<span class="label ${tone}">${esc(label)}</span><span class="job-event-text">${esc(item.message)}</span>`;
+    return row;
+  }
+
+  function renderJobs() {
+    // Parallel requests can reach the server out of click order; its job ids give the run order.
+    const list = [...jobs].sort((a, b) => (a.id ?? Number.MAX_SAFE_INTEGER) - (b.id ?? Number.MAX_SAFE_INTEGER));
+    const running = list.find((job) => job.status === "running");
+    const waiting = list.filter((job) => job.status === "queued");
+    const done = list.every(finished);
+    // Follow the running search; once everything is finished keep showing the last one.
+    const shown = running || (done ? list.at(-1) : waiting[0]);
+    const failed = list.some((job) => job.status === "error");
+
+    jobPanel.classList.toggle("is-done", done);
+    jobPanel.classList.toggle("is-failed", done && failed);
+    if (done && jobs.length > 1) {
+      const sent = jobs.reduce((sum, job) => sum + job.sent, 0);
+      jobTitle.textContent = `${plural(jobs.length, "search", "searches")} finished`;
+      jobStatus.textContent = [sent ? `${plural(sent, "release")} sent to Quasarr` : "No new releases", failed ? "some failed" : ""].filter(Boolean).join(" · ");
+    } else {
+      jobTitle.textContent = shown.title;
+      const status = shown.message || (shown.status === "running" ? `Running · ${plural(shown.sent, "release")} sent` : "Queued");
+      jobStatus.textContent = [status, waiting.length && !done ? `${waiting.length} queued` : ""].filter(Boolean).join(" · ");
+    }
+
+    const rows = list.length > 1 ? list.map((job) => {
+      const [label, tone] = jobLabels[job.status];
+      const note = job.message || (job.status === "running" ? plural(job.sent, "release") + " sent" : "");
+      return `<div class="job-event${job === shown ? " is-current" : ""}"><span class="label ${tone}">${label}</span><span class="job-event-text">${esc(job.title)}${note ? ` <span class="muted">· ${esc(note)}</span>` : ""}</span></div>`;
+    }).join("") : "";
+    jobQueue.hidden = !rows;
+    if (jobQueue.dataset.html !== rows) {
+      jobQueue.innerHTML = rows;
+      jobQueue.dataset.html = rows;
+    }
+
+    if (shownJob !== shown) {
+      shownJob = shown;
+      jobResults.replaceChildren(...shown.events.map(jobEventRow));
+      jobResults.scrollTop = jobResults.scrollHeight;
+    }
+  }
+
+  function appendJobEvents(job, items) {
+    job.events.push(...items);
+    if (job.events.length > 300) job.events.splice(0, job.events.length - 300);
+    if (job !== shownJob || !items.length) return;
     const pinned = jobResults.scrollHeight - jobResults.scrollTop - jobResults.clientHeight < 40;
-    jobResults.append(row);
+    jobResults.append(...items.map(jobEventRow));
+    while (jobResults.children.length > 300) jobResults.firstElementChild.remove();
     if (pinned) jobResults.scrollTop = jobResults.scrollHeight;
   }
 
-  async function runJob(url, title, magazineIds = []) {
-    const token = ++activeJob;
-    magazineIds.forEach((id) => state.searching.add(id));
+  function renderSearching() {
     render();
-    showJob(title);
+    if (sheet.id) renderSheetHead();
+  }
+
+  async function runJob(url, title, magazineIds = []) {
+    if (jobs.some((job) => !finished(job) && job.url === url)) {
+      toast(`${title} is already queued`);
+      return;
+    }
+    // A new batch starts once everything from the previous one has finished.
+    if (jobs.every(finished)) {
+      jobs = [];
+      jobPanel.classList.remove("is-collapsed");
+      $("#job-toggle").setAttribute("aria-expanded", "true");
+    }
+    const job = { url, title, ids: magazineIds, status: "queued", sent: 0, message: "", events: [] };
+    jobs.push(job);
+    jobPanel.hidden = false;
+    renderJobs();
+    renderSearching();
     try {
       const data = await api(url, { method: "POST" });
       if (!data?.job_id) {
-        finishJob(token, "done", data?.downloads ? `${plural(data.downloads, "release")} sent` : "No new releases");
+        finishJob(job, "done", data?.downloads ? `${plural(data.downloads, "release")} sent` : "No new releases");
         return;
       }
+      job.id = Number(data.job_id);
       let seen = 0;
-      let sent = 0;
       while (true) {
-        const job = await api(`/api/jobs/${data.job_id}`);
-        const events = job.events || [];
-        // The server keeps the last 300 events; fall back to the tail if we fell behind.
-        const fresh = events.length >= seen ? events.slice(seen) : events.slice(-50);
-        seen = events.length;
-        for (const item of fresh) {
-          if (item.event === "sent") sent += 1;
-          if (token === activeJob) appendJobEvent(item);
-        }
-        if (token === activeJob) {
-          jobTitle.textContent = job.title || title;
-          jobStatus.textContent = job.status === "running" || job.status === "queued" ? `${job.status === "queued" ? "Queued" : "Running"} · ${plural(sent, "release")} sent` : jobStatus.textContent;
-        }
-        if (job.status === "done" || job.status === "error") {
-          finishJob(token, job.status, job.status === "error" ? "Search failed" : sent ? `${plural(sent, "release")} sent to Quasarr` : "No new releases");
+        const status = await api(`/api/jobs/${data.job_id}`);
+        const events = status.events || [];
+        // The server keeps only the last 300 events; event_count says how many happened in total.
+        const total = status.event_count ?? events.length;
+        const fresh = events.slice(Math.max(0, events.length - (total - seen)));
+        seen = total;
+        job.sent += fresh.filter((item) => item.event === "sent").length;
+        job.status = status.status === "running" ? "running" : job.status;
+        appendJobEvents(job, fresh);
+        if (status.status === "done" || status.status === "error") {
+          finishJob(job, status.status, status.status === "error" ? "Search failed" : job.sent ? `${plural(job.sent, "release")} sent to Quasarr` : "No new releases");
           return;
         }
+        renderJobs();
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     } catch (error) {
-      finishJob(token, "error", error.message);
+      finishJob(job, "error", error.message);
     } finally {
-      magazineIds.forEach((id) => state.searching.delete(id));
-      render();
+      renderSearching();
       dashboardPoll.now();
       if (sheet.id && magazineIds.includes(sheet.id)) loadTab();
     }
   }
 
-  function finishJob(token, status, message) {
-    if (token !== activeJob) return;
-    jobPanel.classList.add("is-done");
-    jobPanel.classList.toggle("is-failed", status === "error");
-    jobStatus.textContent = message;
-    if (jobPanel.classList.contains("is-collapsed") || !jobResults.children.length) {
-      toast(`${jobTitle.textContent}: ${message}`, status === "error" ? "error" : "success");
+  function finishJob(job, status, message) {
+    job.status = status;
+    job.message = message;
+    renderJobs();
+    if (jobPanel.hidden || jobPanel.classList.contains("is-collapsed")) {
+      toast(`${job.title}: ${message}`, status === "error" ? "error" : "success");
     }
   }
 
   function searchMagazine(mag) {
-    if (state.searching.has(mag.id)) return;
+    if (isSearching(mag.id)) {
+      toast(`${mag.title} is already queued`);
+      return;
+    }
     runJob(`/api/magazines/${mag.id}/search`, `Searching ${mag.title}`, [mag.id]);
   }
 
@@ -694,7 +758,7 @@
     const active = $("#magazine-modal-active");
     if (!active.disabled) active.checked = mag.active;
     const searchNow = $("#magazine-modal-search-now");
-    const searching = state.searching.has(mag.id);
+    const searching = isSearching(mag.id);
     searchNow.disabled = searching;
     searchNow.innerHTML = searching ? '<span class="spinner"></span>Searching…' : `${icon("search")}Search now`;
     const counts = {
@@ -736,6 +800,8 @@
     sheetDialog.querySelectorAll("[data-tab]").forEach((button) => {
       button.setAttribute("aria-selected", String(button.dataset.tab === tab));
     });
+    // The tab row scrolls sideways on narrow screens.
+    sheetDialog.querySelector(`[data-tab="${tab}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
     const searchable = ["downloaded", "errors", "skips"].includes(tab);
     $("#magazine-modal-tools").hidden = !searchable && !["duplicates"].includes(tab);
     sheetSearch.parentElement.hidden = !searchable;
@@ -1245,6 +1311,10 @@
   state.loaded = true;
   dashboardPoll.start();
 
-  const deepLink = location.hash.match(/^#magazine\/(\d+)\/(\w+)/);
-  if (deepLink && byId(deepLink[1])) openMagazine(Number(deepLink[1]), deepLink[2]);
+  function openDeepLink() {
+    const deepLink = location.hash.match(/^#magazine\/(\d+)\/(\w+)/);
+    if (deepLink && byId(deepLink[1])) openMagazine(Number(deepLink[1]), deepLink[2]);
+  }
+  openDeepLink();
+  window.addEventListener("hashchange", openDeepLink);
 })();

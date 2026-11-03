@@ -322,6 +322,13 @@ class Database:
                 (1 if active else 0, magazine_id),
             )
 
+    def mark_searched(self, magazine_id: int):
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE magazines SET last_search_at=CURRENT_TIMESTAMP WHERE id=?",
+                (magazine_id,),
+            )
+
     def delete_magazine(self, magazine_id: int):
         with self.connect() as conn:
             conn.execute(

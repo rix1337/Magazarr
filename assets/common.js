@@ -341,6 +341,27 @@
     }
   });
 
+  // Toasts and the job panel are fixed elements in the page, but a modal dialog sits in the top layer
+  // above them and makes everything outside it inert. Keep them inside the topmost open sheet or modal;
+  // the small confirm dialog is too short-lived to host them. Open animations fill backwards only,
+  // so a finished dialog keeps no transform that would trap these fixed layers inside its box.
+  const modals = [];
+  new MutationObserver((records) => {
+    for (const { target } of records) {
+      if (!(target instanceof HTMLDialogElement)) continue;
+      const index = modals.indexOf(target);
+      if (index >= 0) modals.splice(index, 1);
+      if (target.open && target.matches(":modal") && !target.classList.contains("modal-sm")) modals.push(target);
+    }
+    // The job panel would cover a centred modal's buttons, so it only follows sheets.
+    const hosts = { toasts: modals.at(-1), "job-panel": modals.findLast((dialog) => dialog.classList.contains("sheet")) };
+    for (const [id, dialog] of Object.entries(hosts)) {
+      const node = document.getElementById(id);
+      const host = dialog || document.body;
+      if (node && node.parentElement !== host) host.append(node);
+    }
+  }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["open"] });
+
   // Menus: one open at a time, close on outside click or Escape.
   function closeMenus(except) {
     document.querySelectorAll(".menu:not([hidden])").forEach((menu) => {

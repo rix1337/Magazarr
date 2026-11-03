@@ -841,6 +841,11 @@ select {
   color: var(--ink-3);
 }
 
+/* Flags sit where the placeholder note is. */
+.mag-cover:has(.cover-flags .flag) .cover-blank-note {
+  visibility: hidden;
+}
+
 /* Bottom edge: the masthead at the top is what makes a cover recognisable. */
 .cover-flags {
   position: absolute;
@@ -1172,7 +1177,7 @@ dialog {
 .modal[open] {
   display: flex;
   flex-direction: column;
-  animation: lift 0.2s var(--ease) both;
+  animation: lift 0.2s var(--ease) backwards;
 }
 
 .modal > form {
@@ -1244,7 +1249,7 @@ dialog::backdrop {
 .sheet[open] {
   display: flex;
   flex-direction: column;
-  animation: slide 0.28s var(--ease) both;
+  animation: slide 0.28s var(--ease) backwards;
 }
 
 .sheet.is-closing {
@@ -1945,8 +1950,27 @@ dialog::backdrop {
   font-size: 12px;
 }
 
-.job-panel.is-collapsed .job-results {
+.job-panel.is-collapsed .job-results,
+.job-panel.is-collapsed .job-queue {
   display: none;
+}
+
+.job-queue {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow: auto;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 12.5px;
+}
+
+.job-queue .job-event.is-current .job-event-text {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.job-queue .muted {
+  font-weight: 400;
 }
 
 .job-panel .chevron {

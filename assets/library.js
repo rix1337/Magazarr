@@ -62,17 +62,21 @@
       data.items.forEach((item) => grid.append(tile(item)));
       state.total = data.total;
       state.offset += data.items.length;
-      more.hidden = state.offset >= state.total;
-      $("#library-empty").hidden = state.total > 0;
-      const scope = filter.value ? filter.options[filter.selectedIndex].text : "all magazines";
-      count.textContent = search.value.trim()
-        ? `${plural(state.total, "issue")} matching “${search.value.trim()}” in ${scope}`
-        : `${plural(state.total, "issue")} in ${scope}`;
+      renderCount();
     } catch (error) {
       if (request === state.request) toast(error.message, "error");
     } finally {
       setBusy(more, false);
     }
+  }
+
+  function renderCount() {
+    more.hidden = state.offset >= state.total;
+    $("#library-empty").hidden = state.total > 0;
+    const scope = filter.value ? filter.options[filter.selectedIndex].text : "all magazines";
+    count.textContent = search.value.trim()
+      ? `${plural(state.total, "issue")} matching “${search.value.trim()}” in ${scope}`
+      : `${plural(state.total, "issue")} in ${scope}`;
   }
 
   function updateSelection() {
@@ -110,7 +114,9 @@
       state.offset = Math.max(0, state.offset - ids.length);
       toast(`Deleted ${plural(data?.deleted ?? ids.length, "issue")}`, "success");
       updateSelection();
-      load();
+      // Keep the pages already loaded; only refill when the grid ran empty.
+      if (grid.querySelector(".issue-tile")) renderCount();
+      else load();
     } catch (error) {
       toast(error.message, "error");
     }

@@ -440,6 +440,7 @@ def job_panel() -> str:
         <button type="button" class="btn btn-quiet btn-icon btn-sm" id="job-toggle" aria-label="Collapse" aria-expanded="true">{icon("chevron-right", "icon chevron")}</button>
         <button type="button" class="btn btn-quiet btn-icon btn-sm" id="job-close" aria-label="Close">{icon("x")}</button>
       </header>
+      <div class="job-queue" id="job-queue" hidden></div>
       <div class="job-results" id="job-results"></div>
     </section>
     """
