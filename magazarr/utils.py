@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import base64
+import binascii
 import mimetypes
 import re
 import unicodedata
@@ -7,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 MONTHS = {
@@ -373,3 +376,17 @@ def _month_year_aliases(title: str) -> set[str]:
                         aliases.add(value.isoformat())
                         aliases.add(f"date:{value.isoformat()}")
     return aliases
+
+
+def release_source(download_url: str) -> str:
+    """Source key from a Quasarr payload link (title|url|size|password|imdb|source)."""
+    payload = parse_qs(urlparse(str(download_url or "")).query).get("payload", [""])[0]
+    try:
+        fields = (
+            base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+            .decode("utf-8")
+            .split("|")
+        )
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return ""
+    return fields[5].strip().casefold() if len(fields) >= 6 else ""

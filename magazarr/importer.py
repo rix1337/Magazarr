@@ -9,7 +9,8 @@ from pathlib import Path
 import fitz
 from loguru import logger
 
-from magazarr.cover import pdf_first_page_hash
+from magazarr.cover import CoverError, extract_pdf_thumbnail, pdf_first_page_hash
+from magazarr.downloads import delete_finished_package
 from magazarr.notifications import notify_error, notify_import_success
 from magazarr.quasarr_client import QuasarrClient
 from magazarr.settings import Settings
@@ -60,7 +61,7 @@ def import_completed(db, settings: Settings) -> list[str]:
                 f"Download failed: {item.get('fail_message') or item.get('name')}",
                 download,
             )
-            _delete_finished_package(
+            delete_finished_package(
                 db, client, download, item, "Failed package cleanup"
             )
             continue
@@ -69,15 +70,13 @@ def import_completed(db, settings: Settings) -> list[str]:
         storage = str(item.get("storage") or "").strip()
         db.update_download_storage(download["id"], storage, "completed")
         if _import_one(db, settings, download, storage):
-            _delete_finished_package(
+            delete_finished_package(
                 db, client, download, item, "Imported package cleanup"
             )
             imported.append(download["release_title"])
         else:
             db.update_download_storage(download["id"], storage, "import_error")
-            _delete_finished_package(
-                db, client, download, item, "Failed import cleanup"
-            )
+            delete_finished_package(db, client, download, item, "Failed import cleanup")
     return imported
 
 
@@ -103,35 +102,6 @@ def _history_name_key(value) -> str:
 
 def _history_status(item: dict) -> str:
     return str(item.get("status") or "").strip().lower()
-
-
-def _delete_finished_package(
-    db, client: QuasarrClient, download, item: dict, label: str
-):
-    package_id = str(item.get("nzo_id") or download["package_id"] or "").strip()
-    if not package_id:
-        return
-    title = download["release_title"]
-    try:
-        if client.delete_package(package_id, title):
-            return
-    except Exception as exc:
-        message = f"{label} failed: {exc}"
-    else:
-        fallback_id = str(download["package_id"] or "").strip()
-        if fallback_id and fallback_id != package_id:
-            try:
-                if client.delete_package(fallback_id, title):
-                    return
-            except Exception as exc:
-                message = f"{label} failed: {exc}"
-            else:
-                message = f"{label} failed: {title}"
-        else:
-            message = f"{label} failed: {title}"
-    logger.warning(message)
-    if hasattr(db, "record_event"):
-        db.record_event("warning", "import", message, title)
 
 
 def _import_one(db, settings: Settings, download, storage: str) -> bool:
@@ -212,6 +182,11 @@ def _import_one(db, settings: Settings, download, storage: str) -> bool:
         size,
         download["package_id"],
     )
+    try:
+        # Render the grid thumbnail now so browsing never waits on PDF rendering.
+        extract_pdf_thumbnail(dest)
+    except CoverError:
+        pass
     cleanup_dir = source if source.is_dir() else None
     if (
         cleanup_dir

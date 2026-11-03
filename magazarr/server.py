@@ -6,6 +6,8 @@ from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
     daemon_threads = True
+    # socketserver defaults to a backlog of 5; a cover grid opens dozens of connections at once.
+    request_queue_size = 128
 
     def server_bind(self):
         TCPServer.server_bind(self)

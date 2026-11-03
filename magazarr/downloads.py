@@ -2,6 +2,8 @@
 
 import json
 
+from loguru import logger
+
 from magazarr.notifications import notify_error
 from magazarr.quasarr_client import QuasarrClient
 from magazarr.settings import Settings
@@ -47,7 +49,18 @@ def sync_download_errors(
         download = by_package.get(str(item.get("nzo_id"))) or by_title.get(title_key)
         if not download:
             continue
-        if _status(item) == "failed" and download["status"] != "download_error":
+        if _status(item) != "failed":
+            continue
+        # Failed packages stay in Quasarr until deleted; the importer only
+        # cleans up snatched rows, so this sync owns failed-package cleanup.
+        delete_finished_package(
+            db,
+            QuasarrClient(settings.quasarr_url, settings.quasarr_api_key),
+            download,
+            item,
+            "Failed package cleanup",
+        )
+        if download["status"] != "download_error":
             reason = str(item.get("fail_message") or "Download failed")
             db.update_download_status(
                 download["id"],
@@ -97,6 +110,35 @@ def sync_download_errors(
             release_title=download["release_title"],
             reference=_discord_reference(download),
         )
+
+
+def delete_finished_package(
+    db, client: QuasarrClient, download, item: dict, label: str
+):
+    package_id = str(item.get("nzo_id") or download["package_id"] or "").strip()
+    if not package_id:
+        return
+    title = download["release_title"]
+    try:
+        if client.delete_package(package_id, title):
+            return
+    except Exception as exc:
+        message = f"{label} failed: {exc}"
+    else:
+        fallback_id = str(download["package_id"] or "").strip()
+        if fallback_id and fallback_id != package_id:
+            try:
+                if client.delete_package(fallback_id, title):
+                    return
+            except Exception as exc:
+                message = f"{label} failed: {exc}"
+            else:
+                message = f"{label} failed: {title}"
+        else:
+            message = f"{label} failed: {title}"
+    logger.warning(message)
+    if hasattr(db, "record_event"):
+        db.record_event("warning", "import", message, title)
 
 
 def _discord_reference(download) -> dict | None:

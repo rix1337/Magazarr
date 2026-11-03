@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from magazarr.cover import pdf_first_page_hash
-from magazarr.utils import clean_release_title, parse_issue_date
+from magazarr.utils import clean_release_title, parse_issue_date, release_source
 
 
 def _compute_sort_value(issue_key: str, release_title: str = "") -> str:
@@ -861,6 +861,26 @@ class Database:
                     reason,
                 ),
             )
+
+    def has_downloaded_release(
+        self, magazine_id: int, release_title: str, download_url: str
+    ) -> bool:
+        source = release_source(download_url)
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT download_url FROM downloads
+                WHERE magazine_id=? AND release_title=? COLLATE NOCASE
+                """,
+                (magazine_id, release_title),
+            ).fetchall()
+        # Unknown sources match on title alone.
+        return any(
+            not source
+            or not release_source(row["download_url"])
+            or release_source(row["download_url"]) == source
+            for row in rows
+        )
 
     def has_skipped_release(
         self, magazine_id: int, release_title: str, download_url: str

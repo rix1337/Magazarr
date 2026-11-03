@@ -1,10 +1,12 @@
-<p align="center">
-  <img src="assets/magazarr-logo.png" alt="Magazarr" width="520">
-</p>
+# Magazarr
+
+<img src="https://raw.githubusercontent.com/rix1337/Magazarr/main/assets/magazarr-icon.png" data-canonical-src="https://raw.githubusercontent.com/rix1337/Magazarr/main/assets/magazarr-icon.png" width="64" height="64" />
 
 Magazarr is a small magazine-only companion for Quasarr.
 
 It keeps a free-text magazine list, searches Quasarr for recent issues, sends chosen releases back to Quasarr for download, imports the largest PDF from completed JDownloader folders, and exposes the library through OPDS.
+
+<img src="https://raw.githubusercontent.com/rix1337/Magazarr/main/assets/magazarr-screenshot.jpg" data-canonical-src="https://raw.githubusercontent.com/rix1337/Magazarr/main/assets/magazarr-screenshot.jpg" alt="Magazarr web UI showing magazine covers with download and error status" width="100%" />
 
 Magazarr automatically searches active titles every 60 minutes by default and checks completed downloads for import every minute by default. Set either interval to `0` to disable that background task.
 

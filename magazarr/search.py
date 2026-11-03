@@ -188,6 +188,11 @@ def filter_candidates(
         if _has_skipped_release(db, magazine["id"], result):
             _emit_skip(on_progress, magazine, result, "skipped")
             continue
+        if hasattr(db, "has_downloaded_release") and db.has_downloaded_release(
+            magazine["id"], result.title, result.download_url
+        ):
+            _emit_skip(on_progress, magazine, result, "duplicate", result.title)
+            continue
         if not magazine_title_matches(magazine["title"], result.title):
             _emit_skip(on_progress, magazine, result, "title_mismatch")
             continue

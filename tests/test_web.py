@@ -482,7 +482,9 @@ def test_dashboard_api_returns_magazines(tmp_path):
     payload = json.loads(body)
 
     assert status.startswith("200")
-    assert b"Magazine One" in payload["magazines"].encode()
+    assert [mag["title"] for mag in payload["magazines"]] == ["Magazine One"]
+    assert payload["magazines"][0]["blacklist"] == []
+    assert payload["quasarr_timeout"] is False
 
 
 def test_skipped_view_returns_errors_before_skipped(tmp_path):
@@ -622,7 +624,9 @@ def test_issue_payload_includes_viewer_urls(tmp_path):
 
     payload = issue_payload(db.issues()[0])
 
-    assert payload["cover_url"] == f"/opds?cmd=Cover&issueid={payload['id']}"
+    assert payload["cover_url"] == (
+        f"/opds?cmd=Cover&issueid={payload['id']}&size=thumb"
+    )
     assert payload["view_url"] == f"/issues/{payload['id']}/view"
     assert payload["file_url"] == f"/issues/{payload['id']}/file"
 
